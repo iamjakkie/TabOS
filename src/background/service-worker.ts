@@ -119,6 +119,34 @@ async function handleMessage(message: BackgroundMessage, sendResponse: (r: any) 
         break;
       }
 
+      case 'FORCE_SYNC': {
+        await syncLiveTabsToStore();
+        sendResponse({ ok: true });
+        break;
+      }
+
+      case 'GET_DIAGNOSTICS': {
+        const chromeTabs = await chrome.tabs.query({});
+        const stored = await getAllTabs();
+        const SKIP = ['chrome://', 'chrome-extension://', 'devtools://', 'about:', 'data:'];
+        const skipped = chromeTabs.filter(t => {
+          const url = t.url || t.pendingUrl || '';
+          return !url || SKIP.some(s => url.startsWith(s));
+        });
+        const byState = stored.reduce((acc, t) => {
+          acc[t.state] = (acc[t.state] ?? 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        sendResponse({
+          chromeTabsTotal: chromeTabs.length,
+          chromeTabsSkipped: skipped.length,
+          chromeTabsImportable: chromeTabs.length - skipped.length,
+          storedTotal: stored.length,
+          storedByState: byState,
+        });
+        break;
+      }
+
       case 'RESTORE_TAB': {
         const entry = await getTabEntry(message.payload.tabId);
         if (entry) await restoreTab(entry);

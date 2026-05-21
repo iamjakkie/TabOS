@@ -66,6 +66,14 @@ export interface GetStateMessage {
   type: 'GET_STATE';
 }
 
+export interface ForceSyncMessage {
+  type: 'FORCE_SYNC';
+}
+
+export interface GetDiagnosticsMessage {
+  type: 'GET_DIAGNOSTICS';
+}
+
 export interface TriggerExportMessage {
   type: 'TRIGGER_EXPORT';
   payload: {
@@ -137,6 +145,8 @@ export type BackgroundMessage =
   | DeleteWorkspaceMessage
   | SavePrefsMessage
   | GetStateMessage
+  | ForceSyncMessage
+  | GetDiagnosticsMessage
   | TriggerExportMessage
   | TriggerImportMessage;
 

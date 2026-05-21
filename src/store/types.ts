@@ -74,8 +74,8 @@ export interface UserPrefs {
 }
 
 export const DEFAULT_USER_PREFS: UserPrefs = {
-  maxActiveTabs: 50,
-  maxMemoryMB: 2048,
+  maxActiveTabs: 500,
+  maxMemoryMB: 8192,
   defaultDecayDays: 7,
   digestFrequency: 'weekly',
   digestTime: '09:00',
