@@ -1,14 +1,16 @@
-import { initTracker, rehydrateFocusState } from './tracker';
+import { initTracker, rehydrateFocusState, buildEntryFromChromeTab } from './tracker';
 import { initScheduler, rehydrateSnoozeAlarms, scheduleSnooze, cancelSnooze } from './scheduler';
 import {
   getAllTabs,
   getAllWorkspaces,
   getUserPrefs,
   upsertTabEntry,
+  upsertTabEntries,
   upsertWorkspace,
   deleteWorkspace,
   saveUserPrefs,
   getTabEntry,
+  getTabEntryByChromeId,
 } from '../store/db';
 import { virtualizeTab, restoreTab } from './virtualizer';
 import { broadcastTabsUpdate, broadcastWorkspacesUpdate } from './broadcast';
@@ -281,20 +283,36 @@ async function handleWorkspaceSwitch(targetWorkspaceId: string): Promise<void> {
 
 // ─── Sync on startup ─────────────────────────────────────────────────────────
 
-/** Ensure any tabs open in Chrome that we don't have entries for get created */
-async function syncLiveTabsToStore(): Promise<void> {
-  const chromeTabs = await chrome.tabs.query({});
-  const { getTabEntryByChromeId } = await import('../store/db');
+/**
+ * On install or service worker restart, query all currently open Chrome tabs
+ * and create TabEntry records for any we haven't seen before.
+ * This is what "scrapes" the existing session into TabOS.
+ */
+export async function syncLiveTabsToStore(): Promise<void> {
+  const [chromeTabs, workspaces] = await Promise.all([
+    chrome.tabs.query({}),
+    getAllWorkspaces(),
+  ]);
+
+  const newEntries: import('../store/types').TabEntry[] = [];
 
   for (const tab of chromeTabs) {
-    if (!tab.id || !tab.url || tab.url.startsWith('chrome://')) continue;
+    if (!tab.id) continue;
     const existing = await getTabEntryByChromeId(tab.id);
-    if (!existing) {
-      // Synthetic create event for tabs that were open before extension was installed
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tracker = await import('./tracker') as any;
-      // Trigger through the normal creation path
-      tracker.handleTabCreatedExternal?.(tab);
+    if (existing) {
+      // Tab already known — update chromeTabId in case it changed (e.g. after browser restart)
+      if (existing.chromeTabId !== tab.id) {
+        await upsertTabEntry({ ...existing, chromeTabId: tab.id, state: 'active' });
+      }
+      continue;
     }
+
+    const entry = await buildEntryFromChromeTab(tab, workspaces);
+    if (entry) newEntries.push(entry);
+  }
+
+  if (newEntries.length > 0) {
+    await upsertTabEntries(newEntries);
+    await broadcastTabsUpdate();
   }
 }

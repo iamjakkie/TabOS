@@ -18,11 +18,14 @@ export function initTracker(): void {
   chrome.windows.onFocusChanged.addListener(handleWindowFocusChanged);
 }
 
-async function handleTabCreated(tab: chrome.tabs.Tab): Promise<void> {
-  if (!tab.url || tab.url.startsWith('chrome://')) return;
+/** Build a TabEntry from a Chrome tab object and classify it. Exported for use by the initial sync. */
+export async function buildEntryFromChromeTab(
+  tab: chrome.tabs.Tab,
+  workspaces: Awaited<ReturnType<typeof getAllWorkspaces>>,
+): Promise<TabEntry | null> {
+  if (!tab.url || !tab.id || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) return null;
 
   const now = Date.now();
-  const workspaces = await getAllWorkspaces();
   const domain = extractDomain(tab.url);
 
   const entry: TabEntry = {
@@ -45,12 +48,18 @@ async function handleTabCreated(tab: chrome.tabs.Tab): Promise<void> {
     lastScoredAt: now,
   };
 
-  // Run L1/L2 classification immediately (fast, <5ms)
   const classification = await classifyTab(entry, workspaces);
   entry.workspaceId = classification.workspaceId;
   entry.confidence = classification.confidence;
   entry.classifierLevel = classification.level;
 
+  return entry;
+}
+
+async function handleTabCreated(tab: chrome.tabs.Tab): Promise<void> {
+  const workspaces = await getAllWorkspaces();
+  const entry = await buildEntryFromChromeTab(tab, workspaces);
+  if (!entry) return;
   await upsertTabEntry(entry);
   await broadcastTabsUpdate();
 }
