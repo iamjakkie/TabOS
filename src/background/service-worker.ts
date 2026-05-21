@@ -1,4 +1,4 @@
-import { initTracker, rehydrateFocusState, buildEntryFromChromeTab } from './tracker';
+import { initTracker, rehydrateFocusState, buildEntryFromChromeTabSync } from './tracker';
 import { initScheduler, rehydrateSnoozeAlarms, scheduleSnooze, cancelSnooze } from './scheduler';
 import {
   getAllTabs,
@@ -284,35 +284,68 @@ async function handleWorkspaceSwitch(targetWorkspaceId: string): Promise<void> {
 // ─── Sync on startup ─────────────────────────────────────────────────────────
 
 /**
- * On install or service worker restart, query all currently open Chrome tabs
- * and create TabEntry records for any we haven't seen before.
- * This is what "scrapes" the existing session into TabOS.
+ * On install or service worker restart, query ALL open Chrome tabs across
+ * every window and import any not yet in the store.
+ *
+ * Designed for large sessions (2000+ tabs):
+ *  - One chrome.tabs.query() call — returns everything including discarded tabs
+ *  - One getAllTabs() call — builds an in-memory lookup map (no per-tab DB hits)
+ *  - Corpus loaded once — classification is synchronous per tab
+ *  - Writes in 500-entry chunks via bulkPut
  */
 export async function syncLiveTabsToStore(): Promise<void> {
-  const [chromeTabs, workspaces] = await Promise.all([
+  const { loadCorpora } = await import('../classifier/tfidf');
+  const { chunk } = await import('../shared/utils');
+
+  const [chromeTabs, workspaces, existingEntries, corpora] = await Promise.all([
     chrome.tabs.query({}),
     getAllWorkspaces(),
+    getAllTabs(),
+    loadCorpora(),
   ]);
 
-  const newEntries: import('../store/types').TabEntry[] = [];
+  // Build lookup maps from existing data — O(1) per tab instead of O(n) DB queries
+  const existingByChromeId = new Map(
+    existingEntries.filter(e => e.chromeTabId != null).map(e => [e.chromeTabId!, e]),
+  );
+  const existingByUrl = new Map(existingEntries.map(e => [e.url, e]));
+
+  const toCreate: import('../store/types').TabEntry[] = [];
+  const toUpdate: import('../store/types').TabEntry[] = [];
 
   for (const tab of chromeTabs) {
     if (!tab.id) continue;
-    const existing = await getTabEntryByChromeId(tab.id);
-    if (existing) {
-      // Tab already known — update chromeTabId in case it changed (e.g. after browser restart)
-      if (existing.chromeTabId !== tab.id) {
-        await upsertTabEntry({ ...existing, chromeTabId: tab.id, state: 'active' });
+
+    const knownById = existingByChromeId.get(tab.id);
+    if (knownById) {
+      // Already tracked — reconcile state in case the browser was restarted
+      if (knownById.state !== 'active') {
+        toUpdate.push({ ...knownById, chromeTabId: tab.id, state: 'active' });
       }
       continue;
     }
 
-    const entry = await buildEntryFromChromeTab(tab, workspaces);
-    if (entry) newEntries.push(entry);
+    // Build the entry — sync, no awaits inside the loop
+    const entry = buildEntryFromChromeTabSync(tab, workspaces, corpora);
+    if (!entry) continue;
+
+    // If we've seen this URL before (different chromeTabId), update rather than duplicate
+    const knownByUrl = existingByUrl.get(entry.url);
+    if (knownByUrl) {
+      toUpdate.push({ ...knownByUrl, chromeTabId: tab.id, state: 'active' });
+    } else {
+      toCreate.push(entry);
+    }
   }
 
-  if (newEntries.length > 0) {
-    await upsertTabEntries(newEntries);
+  // Write in chunks — Dexie bulkPut handles the batching efficiently
+  const allWrites = [...toCreate, ...toUpdate];
+  for (const batch of chunk(allWrites, 500)) {
+    await upsertTabEntries(batch);
+  }
+
+  if (allWrites.length > 0) {
     await broadcastTabsUpdate();
+    console.log(`[TabOS] Synced ${toCreate.length} new + ${toUpdate.length} updated tabs from ${chromeTabs.length} Chrome tabs`);
   }
 }

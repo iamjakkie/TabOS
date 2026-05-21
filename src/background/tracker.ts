@@ -2,8 +2,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { db, getTabEntryByChromeId, upsertTabEntry, getActiveTabs, getAllWorkspaces } from '../store/db';
 import { extractDomain } from '../shared/utils';
 import { UNASSIGNED_WORKSPACE_ID } from '../store/types';
-import type { TabEntry } from '../store/types';
+import type { TabEntry, Workspace } from '../store/types';
 import { classifyTab } from '../classifier/engine';
+import { loadCorpora } from '../classifier/tfidf';
+import { classifyByDomain } from '../classifier/domain-rules';
+import { classifyByTFIDF } from '../classifier/tfidf';
+import { L2_CONFIDENCE_THRESHOLD } from '../shared/constants';
+import type { WorkspaceCorpora } from '../classifier/types';
 import { broadcastTabsUpdate } from './broadcast';
 
 // Tracks the currently focused tab and when it gained focus
@@ -18,21 +23,57 @@ export function initTracker(): void {
   chrome.windows.onFocusChanged.addListener(handleWindowFocusChanged);
 }
 
-/** Build a TabEntry from a Chrome tab object and classify it. Exported for use by the initial sync. */
-export async function buildEntryFromChromeTab(
+const SKIP_SCHEMES = ['chrome://', 'chrome-extension://', 'devtools://', 'about:', 'data:'];
+
+function resolveTabUrl(tab: chrome.tabs.Tab): string | null {
+  // Discarded/lazy-loaded tabs may have an empty url but a valid pendingUrl
+  const url = tab.url || tab.pendingUrl || '';
+  if (!url) return null;
+  if (SKIP_SCHEMES.some(s => url.startsWith(s))) return null;
+  return url;
+}
+
+/**
+ * Build a TabEntry from a Chrome tab. Accepts pre-loaded workspaces and corpora
+ * so the bulk sync can share a single load across thousands of tabs.
+ */
+export function buildEntryFromChromeTabSync(
   tab: chrome.tabs.Tab,
-  workspaces: Awaited<ReturnType<typeof getAllWorkspaces>>,
-): Promise<TabEntry | null> {
-  if (!tab.url || !tab.id || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) return null;
+  workspaces: Workspace[],
+  corpora: WorkspaceCorpora,
+): TabEntry | null {
+  if (!tab.id) return null;
+  const url = resolveTabUrl(tab);
+  if (!url) return null;
 
   const now = Date.now();
-  const domain = extractDomain(tab.url);
+  const domain = extractDomain(url);
 
-  const entry: TabEntry = {
+  // Classify inline without async DB hits
+  let workspaceId = UNASSIGNED_WORKSPACE_ID;
+  let confidence = 0;
+  let level: 1 | 2 | 3 = 1;
+
+  const l1 = classifyByDomain(url, workspaces);
+  if (l1) {
+    workspaceId = l1.workspaceId;
+    confidence = l1.confidence;
+    level = 1;
+  } else {
+    const title = tab.title ?? '';
+    const l2 = classifyByTFIDF(title, corpora);
+    if (l2 && l2.score >= L2_CONFIDENCE_THRESHOLD) {
+      workspaceId = l2.workspaceId;
+      confidence = l2.score;
+      level = 2;
+    }
+  }
+
+  return {
     id: uuidv4(),
     chromeTabId: tab.id,
-    url: tab.url,
-    title: tab.title ?? tab.url,
+    url,
+    title: tab.title || url,
     favicon: tab.favIconUrl ?? '',
     domain,
     state: 'active',
@@ -40,20 +81,22 @@ export async function buildEntryFromChromeTab(
     lastActiveAt: now,
     visitCount: 1,
     totalActiveMs: 0,
-    workspaceId: UNASSIGNED_WORKSPACE_ID,
-    confidence: 0,
-    classifierLevel: 1,
+    workspaceId,
+    confidence,
+    classifierLevel: level,
     tags: [],
     stalenessScore: 0,
     lastScoredAt: now,
   };
+}
 
-  const classification = await classifyTab(entry, workspaces);
-  entry.workspaceId = classification.workspaceId;
-  entry.confidence = classification.confidence;
-  entry.classifierLevel = classification.level;
-
-  return entry;
+/** Async wrapper used by the onCreated event handler (single tab, no pre-loaded corpus). */
+export async function buildEntryFromChromeTab(
+  tab: chrome.tabs.Tab,
+  workspaces: Workspace[],
+): Promise<TabEntry | null> {
+  const corpora = await loadCorpora();
+  return buildEntryFromChromeTabSync(tab, workspaces, corpora);
 }
 
 async function handleTabCreated(tab: chrome.tabs.Tab): Promise<void> {
