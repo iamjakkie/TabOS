@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.local
+
+# Claude Code tooling
+CLAUDE.md
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
