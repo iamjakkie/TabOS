@@ -129,18 +129,40 @@ async function handleMessage(message: BackgroundMessage, sendResponse: (r: any) 
         const chromeTabs = await chrome.tabs.query({});
         const stored = await getAllTabs();
         const SKIP = ['chrome://', 'chrome-extension://', 'devtools://', 'about:', 'data:'];
-        const skipped = chromeTabs.filter(t => {
-          const url = t.url || t.pendingUrl || '';
-          return !url || SKIP.some(s => url.startsWith(s));
-        });
+
+        function diagResolveUrl(tab: chrome.tabs.Tab): string {
+          const raw = tab.url || tab.pendingUrl || '';
+          if (!raw || !raw.startsWith('chrome-extension://')) return raw;
+          try {
+            const hash = new URL(raw).hash;
+            const params = new URLSearchParams(hash.slice(1));
+            const real = params.get('uri') ?? params.get('url');
+            if (real && (real.startsWith('http://') || real.startsWith('https://'))) return real;
+          } catch { /* ignore */ }
+          return raw;
+        }
+
+        let emptyUrl = 0, systemUrl = 0, suspenderUnwrapped = 0, importable = 0;
+        for (const t of chromeTabs) {
+          const raw = t.url || t.pendingUrl || '';
+          if (!raw) { emptyUrl++; continue; }
+          const resolved = diagResolveUrl(t);
+          if (resolved !== raw) { suspenderUnwrapped++; importable++; continue; }
+          if (SKIP.some(s => raw.startsWith(s))) { systemUrl++; continue; }
+          importable++;
+        }
+
         const byState = stored.reduce((acc, t) => {
           acc[t.state] = (acc[t.state] ?? 0) + 1;
           return acc;
         }, {} as Record<string, number>);
         sendResponse({
           chromeTabsTotal: chromeTabs.length,
-          chromeTabsSkipped: skipped.length,
-          chromeTabsImportable: chromeTabs.length - skipped.length,
+          chromeTabsSkipped: emptyUrl + systemUrl,
+          chromeTabsImportable: importable,
+          chromeTabsEmptyUrl: emptyUrl,
+          chromeTabsSystemUrl: systemUrl,
+          chromeTabsSuspenderUnwrapped: suspenderUnwrapped,
           storedTotal: stored.length,
           storedByState: byState,
         });

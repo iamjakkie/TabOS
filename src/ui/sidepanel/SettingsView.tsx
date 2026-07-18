@@ -6,6 +6,9 @@ interface Diagnostics {
   chromeTabsTotal: number;
   chromeTabsSkipped: number;
   chromeTabsImportable: number;
+  chromeTabsEmptyUrl: number;
+  chromeTabsSystemUrl: number;
+  chromeTabsSuspenderUnwrapped: number;
   storedTotal: number;
   storedByState: Record<string, number>;
 }
@@ -92,7 +95,9 @@ export default function SettingsView() {
         {diag && (
           <div style={{ fontSize: 11, color: 'var(--c-muted)', display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
             <DiagRow label="Chrome tabs found" value={diag.chromeTabsTotal} />
-            <DiagRow label="Skipped (chrome:// etc)" value={diag.chromeTabsSkipped} accent="var(--c-muted)" />
+            <DiagRow label="  → empty URL" value={diag.chromeTabsEmptyUrl} />
+            <DiagRow label="  → system (chrome://)" value={diag.chromeTabsSystemUrl} />
+            <DiagRow label="  → suspender unwrapped" value={diag.chromeTabsSuspenderUnwrapped} accent="var(--c-success)" />
             <DiagRow label="Importable" value={diag.chromeTabsImportable} accent="var(--c-success)" />
             <DiagRow label="In TabOS" value={diag.storedTotal} accent="var(--c-accent)" />
             {Object.entries(diag.storedByState).map(([state, count]) => (

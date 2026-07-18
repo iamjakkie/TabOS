@@ -25,12 +25,32 @@ export function initTracker(): void {
 
 const SKIP_SCHEMES = ['chrome://', 'chrome-extension://', 'devtools://', 'about:', 'data:'];
 
-function resolveTabUrl(tab: chrome.tabs.Tab): string | null {
-  // Discarded/lazy-loaded tabs may have an empty url but a valid pendingUrl
-  const url = tab.url || tab.pendingUrl || '';
-  if (!url) return null;
-  if (SKIP_SCHEMES.some(s => url.startsWith(s))) return null;
-  return url;
+/**
+ * Tab suspender extensions (The Great Suspender, Tab Suspender, etc.) replace the
+ * tab URL with a chrome-extension:// suspended page that embeds the real URL and
+ * title in the hash: `#ttl=Page+Title&uri=https://...` or `#url=...`.
+ * Returns the real url + title so we store the original page data, not the suspender proxy.
+ */
+function resolveSuspendedTab(tab: chrome.tabs.Tab): { url: string; title?: string } | null {
+  const raw = tab.url || tab.pendingUrl || '';
+  if (!raw) return null;
+
+  if (raw.startsWith('chrome-extension://')) {
+    try {
+      const hash = new URL(raw).hash; // "#ttl=Page+Title&uri=https://..."
+      const params = new URLSearchParams(hash.slice(1));
+      const realUrl = params.get('uri') ?? params.get('url');
+      if (realUrl && (realUrl.startsWith('http://') || realUrl.startsWith('https://'))) {
+        const realTitle = params.get('ttl') ?? undefined;
+        return { url: realUrl, title: realTitle };
+      }
+    } catch {
+      // malformed — fall through to scheme check
+    }
+  }
+
+  if (SKIP_SCHEMES.some(s => raw.startsWith(s))) return null;
+  return { url: raw };
 }
 
 /**
@@ -43,11 +63,14 @@ export function buildEntryFromChromeTabSync(
   corpora: WorkspaceCorpora,
 ): TabEntry | null {
   if (!tab.id) return null;
-  const url = resolveTabUrl(tab);
-  if (!url) return null;
+  const resolved = resolveSuspendedTab(tab);
+  if (!resolved) return null;
 
+  const { url, title: suspendedTitle } = resolved;
   const now = Date.now();
   const domain = extractDomain(url);
+  // Prefer title embedded in suspender hash, then Chrome's tab.title, then URL as fallback
+  const title = suspendedTitle ?? tab.title ?? url;
 
   // Classify inline without async DB hits
   let workspaceId = UNASSIGNED_WORKSPACE_ID;
@@ -60,7 +83,6 @@ export function buildEntryFromChromeTabSync(
     confidence = l1.confidence;
     level = 1;
   } else {
-    const title = tab.title ?? '';
     const l2 = classifyByTFIDF(title, corpora);
     if (l2 && l2.score >= L2_CONFIDENCE_THRESHOLD) {
       workspaceId = l2.workspaceId;
@@ -73,7 +95,7 @@ export function buildEntryFromChromeTabSync(
     id: uuidv4(),
     chromeTabId: tab.id,
     url,
-    title: tab.title || url,
+    title,
     favicon: tab.favIconUrl ?? '',
     domain,
     state: 'active',
@@ -99,6 +121,11 @@ export async function buildEntryFromChromeTab(
   return buildEntryFromChromeTabSync(tab, workspaces, corpora);
 }
 
+/** Exported for use in diagnostics and other callers that need just the resolved URL. */
+export function resolveTabUrl(tab: chrome.tabs.Tab): string | null {
+  return resolveSuspendedTab(tab)?.url ?? null;
+}
+
 async function handleTabCreated(tab: chrome.tabs.Tab): Promise<void> {
   const workspaces = await getAllWorkspaces();
   const entry = await buildEntryFromChromeTab(tab, workspaces);
@@ -114,18 +141,20 @@ async function handleTabUpdated(
 ): Promise<void> {
   // Only act when the URL or title changes on a fully loaded tab
   if (!changeInfo.url && !changeInfo.title) return;
-  if (!tab.url || tab.url.startsWith('chrome://')) return;
+  const resolved = resolveSuspendedTab(tab);
+  if (!resolved) return;
 
   const existing = await getTabEntryByChromeId(chromeTabId);
   if (!existing) return;
 
-  const urlChanged = changeInfo.url && changeInfo.url !== existing.url;
+  const { url, title: resolvedTitle } = resolved;
+  const urlChanged = changeInfo.url && url !== existing.url;
   const updated: TabEntry = {
     ...existing,
-    url: tab.url,
-    title: tab.title ?? tab.url,
+    url,
+    title: resolvedTitle ?? tab.title ?? url,
     favicon: tab.favIconUrl ?? existing.favicon,
-    domain: extractDomain(tab.url),
+    domain: extractDomain(url),
   };
 
   // Re-classify if URL changed (user navigated to a different site)

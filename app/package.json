@@ -1,0 +1,36 @@
+{
+  "name": "tabos-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-native browser and web-work knowledge graph",
+  "main": "dist/main/main/main.js",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "npm run clean && npm run build:main && npm run build:renderer",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "start": "npm run build && electron .",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.main.json"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.5.2",
+    "d3-force": "^3.0.0",
+    "electron": "^39.2.7",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "sql.js": "^1.14.1",
+    "vite": "^6.3.5"
+  },
+  "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@types/sql.js": "^1.4.11",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

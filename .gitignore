@@ -14,3 +14,20 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Private TabOS source data and local vaults
+/tabs
+/conversation.json
+/imports-private/
+*.tabos
+*.db
+*.db-shm
+*.db-wal
+browser-profile/
+backups/
+
+# Standalone desktop build output
+app/dist/
+app/out/
+app/release/
+app/.vite/
