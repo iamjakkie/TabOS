@@ -86,6 +86,18 @@ async function createWindow(): Promise<void> {
       ],
     },
     {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
       label: 'Navigate',
       submenu: [
         { label: 'Focus Address Bar', accelerator: 'CmdOrCtrl+L', click: () => shellView?.webContents.send('browser:focus-address') },
