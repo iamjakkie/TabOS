@@ -61,16 +61,21 @@ export async function planPath(detail: StudyPathDetail): Promise<SetPlanInput> {
 
   const edges: SetPlanInput['edges'] = [];
   const seen = new Set<string>();
+  const addEdge = (source: string, target: string) => {
+    if (source === target || !validIds.has(source) || !validIds.has(target)) return;
+    const key = `${source}->${target}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({ sourceNodeId: source, targetNodeId: target, kind: 'prereq' });
+  };
   for (const step of plan.steps) {
     if (!validIds.has(step.nodeId)) continue;
-    for (const dep of step.dependsOn) {
-      if (!validIds.has(dep) || dep === step.nodeId) continue;
-      const key = `${dep}->${step.nodeId}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      edges.push({ sourceNodeId: dep, targetNodeId: step.nodeId, kind: 'prereq' });
-    }
+    for (const dep of step.dependsOn) addEdge(dep, step.nodeId);
   }
+
+  // Guarantee no orphans: chain each lane's nodes in difficulty order so every
+  // tile connects to its track. Only adds an edge into a node that has none.
+  ensureConnectivity(order, edges, addEdge, lanes, plan.difficulty, seen);
 
   return {
     pathId: detail.path.id,
@@ -78,6 +83,41 @@ export async function planPath(detail: StudyPathDetail): Promise<SetPlanInput> {
     order,
     layout: layoutFromOrder(order, edges, lanes, plan.difficulty),
   };
+}
+
+// Ensures the graph is connected within each parallel track. For every lane we
+// sort its nodes easy -> hard and link consecutive nodes, but only add a link
+// into a node that currently has no incoming edge (so we never override the
+// model's explicit prerequisites, just fill gaps that would leave orphans).
+function ensureConnectivity(
+  order: string[],
+  edges: SetPlanInput['edges'],
+  addEdge: (source: string, target: string) => void,
+  lanes: Record<string, number>,
+  difficulty: Record<string, number> | undefined,
+  seen: Set<string>,
+): void {
+  const hasIncoming = new Set(edges.map((e) => e.targetNodeId));
+  const rank = (id: string) => (difficulty?.[id] ?? order.indexOf(id));
+
+  const byLane = new Map<number, string[]>();
+  for (const id of order) {
+    const lane = lanes[id] ?? 0;
+    const list = byLane.get(lane) ?? [];
+    list.push(id);
+    byLane.set(lane, list);
+  }
+
+  for (const laneNodes of byLane.values()) {
+    const sorted = [...laneNodes].sort((a, b) => rank(a) - rank(b));
+    for (let i = 1; i < sorted.length; i += 1) {
+      const target = sorted[i]!;
+      if (hasIncoming.has(target)) continue; // respect model's own prereqs
+      const before = seen.size;
+      addEdge(sorted[i - 1]!, target);
+      if (seen.size > before) hasIncoming.add(target);
+    }
+  }
 }
 
 type PlanNode = { id: string; title: string; type: string; units: number | null };
@@ -257,14 +297,16 @@ function layoutFromOrder(
     if (!changed) break;
   }
 
-  // When difficulty is known, rank nodes globally by difficulty and use that
-  // rank as the column, so the whole graph reads strictly easy (left) -> hard
-  // (right). We still keep dependents to the right of their prerequisites.
+  // When difficulty is known, seed columns from difficulty BANDS (not a unique
+  // global rank) so nodes of similar difficulty in different tracks share a
+  // column instead of forming one long diagonal. Then take the max with the
+  // dependency depth and enforce that dependents sit right of their sources.
   if (difficulty) {
-    const ranked = [...order].sort((a, b) => (difficulty[a] ?? 50) - (difficulty[b] ?? 50));
     const colByNode = new Map<string, number>();
-    ranked.forEach((nodeId, index) => colByNode.set(nodeId, index));
-    // Enforce dependency monotonicity: a target sits right of all its sources.
+    for (const nodeId of order) {
+      const band = Math.round((difficulty[nodeId] ?? 50) / 20); // 0..5 bands
+      colByNode.set(nodeId, Math.max(band, depth.get(nodeId) ?? 0));
+    }
     for (let pass = 0; pass < order.length; pass += 1) {
       let changed = false;
       for (const edge of edges) {

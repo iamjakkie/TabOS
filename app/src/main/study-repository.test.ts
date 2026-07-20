@@ -222,6 +222,29 @@ describe('StudyRepository', () => {
     if (prevO) process.env.OPENROUTER_API_KEY = prevO;
   });
 
+  it('planWithAI leaves no orphan tiles (every node connects within its track)', async () => {
+    const prevA = process.env.ANTHROPIC_API_KEY;
+    const prevO = process.env.OPENROUTER_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Connectivity' });
+    const ids = [
+      repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Rust Book' } }).id,
+      repo.addNode({ pathId: p.id, resource: { resourceType: 'video', title: 'Rust Async' } }).id,
+      repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Linear Algebra' } }).id,
+      repo.addNode({ pathId: p.id, resource: { resourceType: 'article', title: 'Linear Algebra Notes' } }).id,
+    ];
+    const detail = await repo.planWithAI(p.id);
+    // Every node is touched by at least one edge (no isolated tiles).
+    const connected = new Set<string>();
+    for (const e of detail!.edges) { connected.add(e.sourceNodeId); connected.add(e.targetNodeId); }
+    for (const nodeId of ids) expect(connected.has(nodeId)).toBe(true);
+    repo.close();
+    if (prevA) process.env.ANTHROPIC_API_KEY = prevA;
+    if (prevO) process.env.OPENROUTER_API_KEY = prevO;
+  });
+
   it('exports a portable snapshot including every canonical table', async () => {
     const repo = await fresh();
     const p = repo.createPath({ title: 'Export test' });
