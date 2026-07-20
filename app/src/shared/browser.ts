@@ -31,6 +31,7 @@ export interface BrowserPathEvent {
 export interface BrowserLayout {
   topInset: number;
   brainHeight: number;
+  contentHidden?: boolean;
 }
 
 export type BrowserCommand =

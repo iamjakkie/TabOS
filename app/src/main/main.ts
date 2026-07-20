@@ -12,12 +12,18 @@ let browserManager: BrowserManager | null = null;
 let repository: SnapshotRepository | null = null;
 let studyRepository: StudyRepository | null = null;
 
-let browserLayout: BrowserLayout = { topInset: 52, brainHeight: 0 };
+let browserLayout: BrowserLayout = { topInset: 52, brainHeight: 0, contentHidden: false };
 
 function updateLayout(): void {
   if (!mainWindow || !shellView || !browserManager) return;
   const { width, height } = mainWindow.getContentBounds();
   shellView.setBounds({ x: 0, y: 0, width, height });
+  if (browserLayout.contentHidden) {
+    // Study Mode (or any full-screen shell UI) owns the viewport: collapse the
+    // native browser view so the DOM shell renders unobstructed.
+    browserManager.setBounds({ x: 0, y: browserLayout.topInset, width: 0, height: 0 });
+    return;
+  }
   browserManager.setBounds({
     x: 0,
     y: browserLayout.topInset,
@@ -98,6 +104,7 @@ async function createWindow(): Promise<void> {
     browserLayout = {
       topInset: Math.max(44, Math.min(120, Math.round(layout.topInset))),
       brainHeight: Math.max(0, Math.round(layout.brainHeight)),
+      contentHidden: layout.contentHidden === true,
     };
     updateLayout();
   });

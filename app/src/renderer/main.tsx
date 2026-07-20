@@ -4,6 +4,7 @@ import type { BrowserSnapshot, BrowserTab } from '../shared/browser';
 import { createHoverWakeController } from './hover-wake';
 import { buildPathRows } from '../main/navigation-path';
 import { KnowledgeGraphView } from './KnowledgeGraphView';
+import { StudyView } from './StudyView';
 import './styles.css';
 
 const EMPTY: BrowserSnapshot = { tabs: [], activeTabId: null, path: [] };
@@ -14,6 +15,7 @@ function App() {
   const [address, setAddress] = useState('');
   const [brainOpen, setBrainOpen] = useState(false);
   const [brainMode, setBrainMode] = useState<'ask' | 'path' | 'groups' | 'activity'>('ask');
+  const [studyOpen, setStudyOpen] = useState(false);
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const tabStripRef = useRef<HTMLDivElement>(null);
@@ -46,8 +48,12 @@ function App() {
   }, [active?.id, active?.url]);
 
   useEffect(() => {
-    void window.tabos.setLayout({ topInset: 52, brainHeight: brainOpen ? BRAIN_HEIGHT : 0 });
-  }, [brainOpen]);
+    void window.tabos.setLayout({
+      topInset: 52,
+      brainHeight: brainOpen ? BRAIN_HEIGHT : 0,
+      contentHidden: studyOpen,
+    });
+  }, [brainOpen, studyOpen]);
 
 
   function reorderTabs(targetId: string) {
@@ -99,6 +105,9 @@ function App() {
             <span>⌕</span>
             <input ref={addressRef} value={address} onFocus={(event) => event.currentTarget.select()} onClick={(event) => event.currentTarget.select()} onChange={(event) => setAddress(event.target.value)} placeholder="Search or enter address" />
           </form>
+          <button className={`brain-button ${studyOpen ? 'active' : ''}`} onClick={() => setStudyOpen((open) => !open)} title="Open Study Mode">
+            <span>◆</span><span className="brain-label">Study</span>
+          </button>
           <button className={`brain-button ${brainOpen ? 'active' : ''}`} onClick={() => setBrainOpen((open) => !open)} title="Open TabOS brain">
             <span>✦</span><span className="brain-label">Brain</span>
           </button>
@@ -107,6 +116,12 @@ function App() {
 
 
       <div className="browser-underlay" />
+
+      {studyOpen && (
+        <section className="study-overlay">
+          <StudyView />
+        </section>
+      )}
 
       {brainOpen && (
         <section className="brain-drawer">
