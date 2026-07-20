@@ -25,7 +25,7 @@ button { color: inherit; }
   background: #15161a; border-bottom: 1px solid rgba(255,255,255,.14);
   -webkit-app-region: drag;
 }
-.tab-strip { grid-column: 1; display: flex; align-items: center; gap: 3px; min-width: 0; height: 52px; padding: 6px 4px 5px 78px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-app-region: no-drag; }
+.tab-strip { grid-column: 1; display: flex; align-items: center; gap: 3px; min-width: 0; height: 52px; padding: 6px 4px 5px 78px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-app-region: drag; }
 .tab-strip::-webkit-scrollbar { display: none; }
 .top-tab {
   -webkit-app-region: no-drag; flex: 0 0 172px; min-width: 172px; max-width: 172px; height: 37px;
