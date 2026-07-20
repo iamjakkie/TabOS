@@ -3,7 +3,7 @@
 // statistics (see StudyPathStats) are always recomputed, never stored as the
 // source of truth.
 
-export const STUDY_SCHEMA_VERSION = 1;
+export const STUDY_SCHEMA_VERSION = 2;
 
 export type StudyPathStatus = 'active' | 'paused' | 'completed' | 'archived';
 export type StudyNodeStatus = 'todo' | 'in_progress' | 'done' | 'skipped';
@@ -63,8 +63,25 @@ export interface StudyPathNode {
   status: StudyNodeStatus;
   targetUnits: number | null;
   notes: string | null;
+  // Canvas coordinates for the lineage/graph view. Null until first placed.
+  canvasX: number | null;
+  canvasY: number | null;
   createdAt: number;
   updatedAt: number;
+  archivedAt: number | null;
+}
+
+// A directed link between two nodes in a path, expressing learning lineage
+// ("study source before target"). User-editable in the graph view.
+export type StudyEdgeKind = 'prereq' | 'related';
+
+export interface StudyPathEdge {
+  id: string;
+  pathId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  kind: StudyEdgeKind;
+  createdAt: number;
   archivedAt: number | null;
 }
 
@@ -130,6 +147,7 @@ export interface StudyPathDetail {
     resource: StudyResource;
     progress: StudyNodeProgress;
   }>;
+  edges: StudyPathEdge[];
   stats: StudyPathStats;
 }
 
@@ -158,6 +176,31 @@ export interface AddNodeInput {
   titleOverride?: string | null;
   targetUnits?: number | null;
   notes?: string | null;
+  canvasX?: number | null;
+  canvasY?: number | null;
+}
+
+export interface UpdateNodePositionInput {
+  nodeId: string;
+  canvasX: number;
+  canvasY: number;
+}
+
+export interface AddEdgeInput {
+  pathId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  kind?: StudyEdgeKind;
+}
+
+export interface SetPlanInput {
+  pathId: string;
+  // Full replacement of the path's lineage edges (used by AI planner / reset).
+  edges: Array<{ sourceNodeId: string; targetNodeId: string; kind?: StudyEdgeKind }>;
+  // Optional node ordering (position) keyed by nodeId.
+  order?: string[];
+  // Optional canvas layout keyed by nodeId.
+  layout?: Record<string, { x: number; y: number }>;
 }
 
 export interface RecordProgressInput {
@@ -191,6 +234,7 @@ export interface StudyExport {
   progressEvents: StudyProgressEvent[];
   sessions: StudySession[];
   deliverables: StudyDeliverable[];
+  edges: StudyPathEdge[];
 }
 
 export interface StudyBridge {
@@ -198,8 +242,14 @@ export interface StudyBridge {
   getPathDetail(pathId: string): Promise<StudyPathDetail | null>;
   createPath(input: CreatePathInput): Promise<StudyPath>;
   addNode(input: AddNodeInput): Promise<StudyPathNode>;
+  addResourcesBulk(pathId: string, resources: CreateResourceInput[]): Promise<StudyPathNode[]>;
   recordProgress(input: RecordProgressInput): Promise<StudyNodeProgress>;
   logSession(input: LogSessionInput): Promise<StudySession>;
+  updateNodePosition(input: UpdateNodePositionInput): Promise<void>;
+  addEdge(input: AddEdgeInput): Promise<StudyPathEdge>;
+  removeEdge(edgeId: string): Promise<void>;
+  setPlan(input: SetPlanInput): Promise<StudyPathDetail | null>;
+  planWithAI(pathId: string): Promise<StudyPathDetail | null>;
   exportAll(): Promise<StudyExport>;
 }
 

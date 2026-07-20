@@ -104,6 +104,94 @@ describe('StudyRepository', () => {
     repo.close();
   });
 
+  it('places new nodes on the canvas without overlapping', async () => {
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Canvas layout' });
+    const a = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'A' } });
+    const b = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'B' } });
+    expect(a.canvasX).not.toBeNull();
+    expect(b.canvasX).not.toBeNull();
+    expect(`${a.canvasX},${a.canvasY}`).not.toBe(`${b.canvasX},${b.canvasY}`);
+    repo.close();
+  });
+
+  it('bulk-adds resources as nodes', async () => {
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Bulk import' });
+    const nodes = repo.addResourcesBulk(p.id, [
+      { resourceType: 'book', title: 'One' },
+      { resourceType: 'video', title: 'Two', totalUnits: 30, unitKind: 'minutes' },
+      { resourceType: 'checkpoint', title: 'Three', unitKind: 'binary' },
+    ]);
+    expect(nodes).toHaveLength(3);
+    const detail = repo.getPathDetail(p.id);
+    expect(detail?.nodes).toHaveLength(3);
+    repo.close();
+  });
+
+  it('adds, dedupes, and removes lineage edges', async () => {
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Edges' });
+    const a = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'A' } });
+    const b = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'B' } });
+    const edge = repo.addEdge({ pathId: p.id, sourceNodeId: a.id, targetNodeId: b.id });
+    const dupe = repo.addEdge({ pathId: p.id, sourceNodeId: a.id, targetNodeId: b.id });
+    expect(dupe.id).toBe(edge.id);
+    expect(repo.getPathDetail(p.id)?.edges).toHaveLength(1);
+    repo.removeEdge(edge.id);
+    expect(repo.getPathDetail(p.id)?.edges).toHaveLength(0);
+    repo.close();
+  });
+
+  it('updates a node canvas position', async () => {
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Move' });
+    const a = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'A' } });
+    repo.updateNodePosition({ nodeId: a.id, canvasX: 123, canvasY: 456 });
+    const detail = repo.getPathDetail(p.id);
+    expect(detail?.nodes[0].node.canvasX).toBe(123);
+    expect(detail?.nodes[0].node.canvasY).toBe(456);
+    repo.close();
+  });
+
+  it('setPlan replaces edges and reorders nodes non-destructively', async () => {
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Plan' });
+    const a = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Foundations' } });
+    const b = repo.addNode({ pathId: p.id, resource: { resourceType: 'video', title: 'Applied' } });
+    repo.addEdge({ pathId: p.id, sourceNodeId: b.id, targetNodeId: a.id });
+    const detail = repo.setPlan({
+      pathId: p.id,
+      edges: [{ sourceNodeId: a.id, targetNodeId: b.id, kind: 'prereq' }],
+      order: [a.id, b.id],
+      layout: { [a.id]: { x: 40, y: 40 }, [b.id]: { x: 320, y: 40 } },
+    });
+    expect(detail?.edges).toHaveLength(1);
+    expect(detail?.edges[0].sourceNodeId).toBe(a.id);
+    expect(detail?.nodes[0].node.id).toBe(a.id);
+    // Old edge is tombstoned, not deleted: still present in full export.
+    const exported = repo.exportAll();
+    expect(exported.edges.length).toBeGreaterThanOrEqual(2);
+    expect(exported.edges.filter((e) => e.archivedAt == null)).toHaveLength(1);
+    repo.close();
+  });
+
+  it('planWithAI produces a linear foundational-first plan without an API key', async () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Auto plan' });
+    const article = repo.addNode({ pathId: p.id, resource: { resourceType: 'article', title: 'Blog' } });
+    const book = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Textbook' } });
+    const detail = await repo.planWithAI(p.id);
+    // Book (foundational) should come before the article and be its prerequisite.
+    expect(detail?.nodes[0].node.id).toBe(book.id);
+    expect(detail?.edges).toHaveLength(1);
+    expect(detail?.edges[0]).toMatchObject({ sourceNodeId: book.id, targetNodeId: article.id });
+    repo.close();
+    if (prev) process.env.ANTHROPIC_API_KEY = prev;
+  });
+
   it('exports a portable snapshot including every canonical table', async () => {
     const repo = await fresh();
     const p = repo.createPath({ title: 'Export test' });

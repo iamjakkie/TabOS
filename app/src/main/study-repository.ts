@@ -3,21 +3,26 @@ import path from 'node:path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import {
   STUDY_SCHEMA_VERSION,
+  type AddEdgeInput,
   type AddNodeInput,
   type CreatePathInput,
+  type CreateResourceInput,
   type LogSessionInput,
   type RecordProgressInput,
+  type SetPlanInput,
   type StudyCompletionState,
   type StudyDeliverable,
   type StudyExport,
   type StudyNodeProgress,
   type StudyPath,
   type StudyPathDetail,
+  type StudyPathEdge,
   type StudyPathNode,
   type StudyPathStats,
   type StudyProgressEvent,
   type StudyResource,
   type StudySession,
+  type UpdateNodePositionInput,
 } from '../shared/study';
 
 let sqlPromise: Promise<SqlJsStatic> | undefined;
@@ -73,6 +78,20 @@ export class StudyRepository {
   }
 
   addNode(input: AddNodeInput): StudyPathNode {
+    const node = this.insertNode(input);
+    this.touchPath(input.pathId, Date.now());
+    this.flush();
+    return node;
+  }
+
+  addResourcesBulk(pathId: string, resources: CreateResourceInput[]): StudyPathNode[] {
+    const nodes = resources.map((resource) => this.insertNode({ pathId, resource }));
+    this.touchPath(pathId, Date.now());
+    this.flush();
+    return nodes;
+  }
+
+  private insertNode(input: AddNodeInput): StudyPathNode {
     const now = Date.now();
     const resource: StudyResource = {
       id: id(),
@@ -102,6 +121,10 @@ export class StudyRepository {
       [input.pathId],
     )?.next ?? 0;
 
+    const placement = input.canvasX != null && input.canvasY != null
+      ? { x: input.canvasX, y: input.canvasY }
+      : this.nextCanvasSlot(input.pathId);
+
     const node: StudyPathNode = {
       id: id(),
       pathId: input.pathId,
@@ -112,20 +135,109 @@ export class StudyRepository {
       status: 'todo',
       targetUnits: input.targetUnits ?? resource.totalUnits ?? null,
       notes: input.notes ?? null,
+      canvasX: placement.x,
+      canvasY: placement.y,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
     };
     this.run(
       `INSERT INTO study_path_nodes(id, path_id, resource_id, parent_node_id, position, title_override,
-         status, target_units, notes, created_at, updated_at, archived_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         status, target_units, notes, canvas_x, canvas_y, created_at, updated_at, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [node.id, node.pathId, node.resourceId, node.parentNodeId, node.position, node.titleOverride,
-       node.status, node.targetUnits, node.notes, node.createdAt, node.updatedAt, node.archivedAt],
+       node.status, node.targetUnits, node.notes, node.canvasX, node.canvasY, node.createdAt, node.updatedAt, node.archivedAt],
+    );
+    return node;
+  }
+
+  // Grid placement that avoids overlapping existing tiles. Tiles are ~220x120;
+  // we lay them out on a 260x150 grid, scanning row-major for the first free cell.
+  private nextCanvasSlot(pathId: string): { x: number; y: number } {
+    const COL_W = 260;
+    const ROW_H = 150;
+    const COLS = 4;
+    const MARGIN = 40;
+    const taken = this.all<{ canvas_x: number | null; canvas_y: number | null }>(
+      'SELECT canvas_x, canvas_y FROM study_path_nodes WHERE path_id = ? AND archived_at IS NULL',
+      [pathId],
+    ).filter((row) => row.canvas_x != null && row.canvas_y != null)
+      .map((row) => `${Math.round(Number(row.canvas_x))},${Math.round(Number(row.canvas_y))}`);
+    const occupied = new Set(taken);
+    for (let index = 0; index < 10000; index += 1) {
+      const col = index % COLS;
+      const rowIdx = Math.floor(index / COLS);
+      const x = MARGIN + col * COL_W;
+      const y = MARGIN + rowIdx * ROW_H;
+      if (!occupied.has(`${x},${y}`)) return { x, y };
+    }
+    return { x: MARGIN, y: MARGIN };
+  }
+
+  updateNodePosition(input: UpdateNodePositionInput): void {
+    const now = Date.now();
+    this.run('UPDATE study_path_nodes SET canvas_x = ?, canvas_y = ?, updated_at = ? WHERE id = ?',
+      [input.canvasX, input.canvasY, now, input.nodeId]);
+    this.flush();
+  }
+
+  addEdge(input: AddEdgeInput): StudyPathEdge {
+    const now = Date.now();
+    const existing = this.first<{ id: string }>(
+      'SELECT id FROM study_path_edges WHERE path_id = ? AND source_node_id = ? AND target_node_id = ? AND archived_at IS NULL',
+      [input.pathId, input.sourceNodeId, input.targetNodeId],
+    );
+    if (existing) return this.mapEdge(this.first<Record<string, unknown>>('SELECT * FROM study_path_edges WHERE id = ?', [existing.id])!);
+    const edge: StudyPathEdge = {
+      id: id(),
+      pathId: input.pathId,
+      sourceNodeId: input.sourceNodeId,
+      targetNodeId: input.targetNodeId,
+      kind: input.kind ?? 'prereq',
+      createdAt: now,
+      archivedAt: null,
+    };
+    this.run(
+      `INSERT INTO study_path_edges(id, path_id, source_node_id, target_node_id, kind, created_at, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [edge.id, edge.pathId, edge.sourceNodeId, edge.targetNodeId, edge.kind, edge.createdAt, edge.archivedAt],
     );
     this.touchPath(input.pathId, now);
     this.flush();
-    return node;
+    return edge;
+  }
+
+  removeEdge(edgeId: string): void {
+    this.run('UPDATE study_path_edges SET archived_at = ? WHERE id = ?', [Date.now(), edgeId]);
+    this.flush();
+  }
+
+  setPlan(input: SetPlanInput): StudyPathDetail | null {
+    const now = Date.now();
+    // Non-destructive: tombstone current edges, then insert the new lineage.
+    this.run('UPDATE study_path_edges SET archived_at = ? WHERE path_id = ? AND archived_at IS NULL', [now, input.pathId]);
+    for (const edge of input.edges) {
+      if (edge.sourceNodeId === edge.targetNodeId) continue;
+      this.run(
+        `INSERT INTO study_path_edges(id, path_id, source_node_id, target_node_id, kind, created_at, archived_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [id(), input.pathId, edge.sourceNodeId, edge.targetNodeId, edge.kind ?? 'prereq', now, null],
+      );
+    }
+    if (input.order) {
+      input.order.forEach((nodeId, index) => {
+        this.run('UPDATE study_path_nodes SET position = ?, updated_at = ? WHERE id = ?', [index, now, nodeId]);
+      });
+    }
+    if (input.layout) {
+      for (const [nodeId, point] of Object.entries(input.layout)) {
+        this.run('UPDATE study_path_nodes SET canvas_x = ?, canvas_y = ?, updated_at = ? WHERE id = ?',
+          [point.x, point.y, now, nodeId]);
+      }
+    }
+    this.touchPath(input.pathId, now);
+    this.flush();
+    return this.getPathDetail(input.pathId);
   }
 
   recordProgress(input: RecordProgressInput): StudyNodeProgress {
@@ -221,7 +333,19 @@ export class StudyRepository {
         progress: this.deriveNodeProgress(node.id),
       };
     });
-    return { path, nodes, stats: this.computeStats(pathId) };
+    const edges = this.all<Record<string, unknown>>(
+      'SELECT * FROM study_path_edges WHERE path_id = ? AND archived_at IS NULL',
+      [pathId],
+    ).map((row) => this.mapEdge(row));
+    return { path, nodes, edges, stats: this.computeStats(pathId) };
+  }
+
+  async planWithAI(pathId: string): Promise<StudyPathDetail | null> {
+    const detail = this.getPathDetail(pathId);
+    if (!detail || detail.nodes.length === 0) return detail;
+    const { planPath } = await import('./study-planner');
+    const plan = await planPath(detail);
+    return this.setPlan(plan);
   }
 
   exportAll(): StudyExport {
@@ -234,6 +358,7 @@ export class StudyRepository {
       progressEvents: this.all<Record<string, unknown>>('SELECT * FROM study_progress_events').map((r) => this.mapProgressEvent(r)),
       sessions: this.all<Record<string, unknown>>('SELECT * FROM study_sessions').map((r) => this.mapSession(r)),
       deliverables: this.all<Record<string, unknown>>('SELECT * FROM study_deliverables').map((r) => this.mapDeliverable(r)),
+      edges: this.all<Record<string, unknown>>('SELECT * FROM study_path_edges').map((r) => this.mapEdge(r)),
     };
   }
 
@@ -357,8 +482,22 @@ export class StudyRepository {
       status: String(row.status) as StudyPathNode['status'],
       targetUnits: row.target_units == null ? null : Number(row.target_units),
       notes: row.notes == null ? null : String(row.notes),
+      canvasX: row.canvas_x == null ? null : Number(row.canvas_x),
+      canvasY: row.canvas_y == null ? null : Number(row.canvas_y),
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at),
+      archivedAt: row.archived_at == null ? null : Number(row.archived_at),
+    };
+  }
+
+  private mapEdge(row: Record<string, unknown>): StudyPathEdge {
+    return {
+      id: String(row.id),
+      pathId: String(row.path_id),
+      sourceNodeId: String(row.source_node_id),
+      targetNodeId: String(row.target_node_id),
+      kind: String(row.kind) as StudyPathEdge['kind'],
+      createdAt: Number(row.created_at),
       archivedAt: row.archived_at == null ? null : Number(row.archived_at),
     };
   }
@@ -482,9 +621,28 @@ export class StudyRepository {
         CREATE INDEX IF NOT EXISTS study_progress_node ON study_progress_events(node_id, created_at);
         CREATE INDEX IF NOT EXISTS study_sessions_path ON study_sessions(path_id);
       `);
+      this.db.run('INSERT OR IGNORE INTO study_schema_migrations(version, applied_at) VALUES (?, ?)', [1, Date.now()]);
     }
 
-    this.db.run('INSERT OR IGNORE INTO study_schema_migrations(version, applied_at) VALUES (?, ?)', [STUDY_SCHEMA_VERSION, Date.now()]);
+    if (current < 2) {
+      // Additive, non-destructive: canvas coordinates + lineage edges.
+      this.db.run('ALTER TABLE study_path_nodes ADD COLUMN canvas_x REAL');
+      this.db.run('ALTER TABLE study_path_nodes ADD COLUMN canvas_y REAL');
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS study_path_edges (
+          id TEXT PRIMARY KEY,
+          path_id TEXT NOT NULL,
+          source_node_id TEXT NOT NULL,
+          target_node_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS study_edges_path ON study_path_edges(path_id);
+      `);
+      this.db.run('INSERT OR IGNORE INTO study_schema_migrations(version, applied_at) VALUES (?, ?)', [2, Date.now()]);
+    }
+
     this.flush();
   }
 

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { app, BaseWindow, ipcMain, Menu, session, WebContentsView } from 'electron';
 import type { BrowserCommand, BrowserLayout } from '../shared/browser';
-import type { AddNodeInput, CreatePathInput, LogSessionInput, RecordProgressInput } from '../shared/study';
+import type { AddEdgeInput, AddNodeInput, CreatePathInput, CreateResourceInput, LogSessionInput, RecordProgressInput, SetPlanInput, UpdateNodePositionInput } from '../shared/study';
 import { BrowserManager } from './browser-manager';
 import { SnapshotRepository } from './snapshot-repository';
 import { StudyRepository } from './study-repository';
@@ -111,15 +111,23 @@ async function createWindow(): Promise<void> {
 
   for (const channel of [
     'study:list-paths', 'study:get-detail', 'study:create-path',
-    'study:add-node', 'study:record-progress', 'study:log-session', 'study:export',
+    'study:add-node', 'study:add-resources-bulk', 'study:record-progress', 'study:log-session',
+    'study:update-node-position', 'study:add-edge', 'study:remove-edge', 'study:set-plan',
+    'study:plan-ai', 'study:export',
   ]) ipcMain.removeHandler(channel);
 
   ipcMain.handle('study:list-paths', () => studyRepository?.listPaths() ?? []);
   ipcMain.handle('study:get-detail', (_event, pathId: string) => studyRepository?.getPathDetail(pathId) ?? null);
   ipcMain.handle('study:create-path', (_event, input: CreatePathInput) => studyRepository?.createPath(input));
   ipcMain.handle('study:add-node', (_event, input: AddNodeInput) => studyRepository?.addNode(input));
+  ipcMain.handle('study:add-resources-bulk', (_event, pathId: string, resources: CreateResourceInput[]) => studyRepository?.addResourcesBulk(pathId, resources));
   ipcMain.handle('study:record-progress', (_event, input: RecordProgressInput) => studyRepository?.recordProgress(input));
   ipcMain.handle('study:log-session', (_event, input: LogSessionInput) => studyRepository?.logSession(input));
+  ipcMain.handle('study:update-node-position', (_event, input: UpdateNodePositionInput) => studyRepository?.updateNodePosition(input));
+  ipcMain.handle('study:add-edge', (_event, input: AddEdgeInput) => studyRepository?.addEdge(input));
+  ipcMain.handle('study:remove-edge', (_event, edgeId: string) => studyRepository?.removeEdge(edgeId));
+  ipcMain.handle('study:set-plan', (_event, input: SetPlanInput) => studyRepository?.setPlan(input) ?? null);
+  ipcMain.handle('study:plan-ai', (_event, pathId: string) => studyRepository?.planWithAI(pathId) ?? null);
   ipcMain.handle('study:export', () => studyRepository?.exportAll());
 
   const rendererPath = path.join(__dirname, '../../renderer/index.html');

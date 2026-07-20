@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   StudyDeliverableType, StudyPath, StudyPathDetail, StudyPathStats,
   StudyResourceType, StudyUnitKind,
 } from '../shared/study';
+import { StudyGraphCanvas } from './StudyGraphCanvas';
+import { parseResources } from './study-import';
 
 type PathSummary = { path: StudyPath; stats: StudyPathStats };
 
@@ -129,7 +131,10 @@ function StudyPathView({ detail, onBack, onChanged }: {
   detail: StudyPathDetail; onBack: () => void; onChanged: () => Promise<void>;
 }) {
   const { path, nodes, stats } = detail;
+  const [view, setView] = useState<'graph' | 'list'>('graph');
   const [addingResource, setAddingResource] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [planning, setPlanning] = useState(false);
   const [sessionNodeId, setSessionNodeId] = useState<string | null>(null);
 
   async function bumpProgress(nodeId: string, delta: number) {
@@ -142,12 +147,33 @@ function StudyPathView({ detail, onBack, onChanged }: {
     await onChanged();
   }
 
+  async function quickLog(nodeId: string) {
+    setView('list');
+    setSessionNodeId(nodeId);
+  }
+
+  async function planWithAI() {
+    setPlanning(true);
+    try { await window.study.planWithAI(path.id); await onChanged(); }
+    finally { setPlanning(false); }
+  }
+
   return (
-    <div className="study-view">
+    <div className="study-view study-detail">
       <div className="study-toolbar">
         <button className="ghost" onClick={onBack}>← Paths</button>
         <h2>{path.title}</h2>
-        <button className="primary" onClick={() => setAddingResource((v) => !v)}>＋ Resource</button>
+        <div className="study-view-toggle">
+          <button className={view === 'graph' ? 'active' : ''} onClick={() => setView('graph')}>Graph</button>
+          <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>List</button>
+        </div>
+        <div className="study-toolbar-actions">
+          <button onClick={() => { setImporting((v) => !v); setAddingResource(false); }} className="ghost">Import</button>
+          <button onClick={() => { setAddingResource((v) => !v); setImporting(false); }} className="ghost">＋ Resource</button>
+          <button onClick={() => void planWithAI()} className="primary" disabled={planning || nodes.length < 2}>
+            {planning ? 'Planning…' : '✦ AI plan'}
+          </button>
+        </div>
       </div>
 
       <div className="study-stats-header">
@@ -157,6 +183,14 @@ function StudyPathView({ detail, onBack, onChanged }: {
         <Stat label="Sessions" value={String(stats.sessionCount)} />
       </div>
 
+      {importing && (
+        <ImportForm
+          pathId={path.id}
+          onCancel={() => setImporting(false)}
+          onImported={async () => { setImporting(false); await onChanged(); }}
+        />
+      )}
+
       {addingResource && (
         <AddResourceForm
           pathId={path.id}
@@ -165,7 +199,17 @@ function StudyPathView({ detail, onBack, onChanged }: {
         />
       )}
 
-      {nodes.length === 0 && !addingResource ? (
+      {view === 'graph' ? (
+        <StudyGraphCanvas
+          detail={detail}
+          onMoveNode={(nodeId, x, y) => { void window.study.updateNodePosition({ nodeId, canvasX: x, canvasY: y }).then(onChanged); }}
+          onAddEdge={(sourceNodeId, targetNodeId) => { void window.study.addEdge({ pathId: path.id, sourceNodeId, targetNodeId }).then(onChanged); }}
+          onRemoveEdge={(edgeId) => { void window.study.removeEdge(edgeId).then(onChanged); }}
+          onBump={(nodeId, delta) => void bumpProgress(nodeId, delta)}
+          onComplete={(nodeId) => void complete(nodeId)}
+          onLogSession={(nodeId) => void quickLog(nodeId)}
+        />
+      ) : nodes.length === 0 && !addingResource && !importing ? (
         <p className="study-empty">No resources yet. Add a book, course, video, article, or checkpoint.</p>
       ) : (
         <div className="study-node-list">
@@ -201,6 +245,47 @@ function StudyPathView({ detail, onBack, onChanged }: {
         </div>
       )}
     </div>
+  );
+}
+
+function ImportForm({ pathId, onImported, onCancel }: {
+  pathId: string; onImported: () => Promise<void>; onCancel: () => void;
+}) {
+  const [text, setText] = useState('');
+  const [filename, setFilename] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const preview = parseResources(text, filename);
+
+  async function loadFile(file: File) {
+    setFilename(file.name);
+    setText(await file.text());
+  }
+
+  async function submit() {
+    if (preview.length === 0) return;
+    await window.study.addResourcesBulk(pathId, preview);
+    await onImported();
+  }
+
+  return (
+    <form className="study-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <div className="study-import-head">
+        <span>Import from CSV / TXT</span>
+        <button type="button" className="ghost" onClick={() => fileRef.current?.click()}>Choose file…</button>
+        <input ref={fileRef} type="file" accept=".csv,.txt,text/csv,text/plain" hidden
+          onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadFile(file); }} />
+      </div>
+      <label>
+        <span>Paste or edit — TXT: one title per line · CSV: header with title,type,units,url</span>
+        <textarea value={text} onChange={(event) => setText(event.target.value)} rows={7}
+          placeholder={'The Rust Programming Language\nAsync Rust\n\n# or CSV:\ntitle,type,units,url\nLinear Algebra Done Right,book,300,'} />
+      </label>
+      <div className="study-import-preview">{preview.length} resource{preview.length === 1 ? '' : 's'} detected</div>
+      <div className="study-form-actions">
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="primary" disabled={preview.length === 0}>Import {preview.length || ''}</button>
+      </div>
+    </form>
   );
 }
 
