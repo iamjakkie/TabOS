@@ -170,6 +170,7 @@ function StudyPathView({ detail, onBack, onChanged }: {
         <div className="study-toolbar-actions">
           <button onClick={() => { setImporting((v) => !v); setAddingResource(false); }} className="ghost">Import</button>
           <button onClick={() => { setAddingResource((v) => !v); setImporting(false); }} className="ghost">＋ Resource</button>
+          <button onClick={() => { void window.study.tidyLayout(path.id).then(onChanged); }} className="ghost" disabled={nodes.length < 1}>Tidy</button>
           <button onClick={() => void planWithAI()} className="primary" disabled={planning || nodes.length < 2}>
             {planning ? 'Planning…' : '✦ AI plan'}
           </button>

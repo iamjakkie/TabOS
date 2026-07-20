@@ -250,6 +250,7 @@ export interface StudyBridge {
   removeEdge(edgeId: string): Promise<void>;
   setPlan(input: SetPlanInput): Promise<StudyPathDetail | null>;
   planWithAI(pathId: string): Promise<StudyPathDetail | null>;
+  tidyLayout(pathId: string): Promise<StudyPathDetail | null>;
   exportAll(): Promise<StudyExport>;
 }
 

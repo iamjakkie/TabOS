@@ -198,6 +198,39 @@ function inferLanes(plan: StudyPlan): Record<string, number> {
   return lanes;
 }
 
+// Re-layout an existing path from its current edges/order, without changing the
+// lineage. Used by the "Tidy" button to compact a sprawling manual graph.
+export function tidyLayout(detail: StudyPathDetail): SetPlanInput {
+  const order = [...detail.nodes]
+    .sort((a, b) => a.node.position - b.node.position)
+    .map((n) => n.node.id);
+  const edges: SetPlanInput['edges'] = detail.edges.map((edge) => ({
+    sourceNodeId: edge.sourceNodeId,
+    targetNodeId: edge.targetNodeId,
+    kind: edge.kind,
+  }));
+  // No lineage yet: just pack tiles into a tidy grid.
+  if (edges.length === 0) {
+    return { pathId: detail.path.id, edges, order, layout: gridLayout(order) };
+  }
+  const plan: StudyPlan = { order, steps: order.map((nodeId) => ({ nodeId, dependsOn: [] })) };
+  for (const edge of edges) {
+    plan.steps.find((s) => s.nodeId === edge.targetNodeId)?.dependsOn.push(edge.sourceNodeId);
+  }
+  const lanes = inferLanes(plan);
+  return { pathId: detail.path.id, edges, order, layout: layoutFromOrder(order, edges, lanes) };
+}
+
+// Simple wrapped grid for graphs with no lineage.
+function gridLayout(order: string[]): Record<string, { x: number; y: number }> {
+  const COL_W = 250; const ROW_H = 160; const MARGIN = 40; const COLS = 4;
+  const layout: Record<string, { x: number; y: number }> = {};
+  order.forEach((nodeId, index) => {
+    layout[nodeId] = { x: MARGIN + (index % COLS) * COL_W, y: MARGIN + Math.floor(index / COLS) * ROW_H };
+  });
+  return layout;
+}
+
 // Lay out nodes so the graph reads left-to-right by dependency depth (X) and
 // stacks parallel tracks on separate rows (Y = lane). This keeps DAGs compact
 // instead of stretching every node into one long diagonal.
@@ -256,7 +289,8 @@ function buildPrompt(pathTitle: string, nodes: PlannerNode[]): string {
 function parsePlan(text: string): StudyPlan {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('no JSON in response');
-  const parsed = JSON.parse(match[0]) as StudyPlan & { steps: Array<PlannedStep & { lane?: number }> };
+  // Tolerate common LLM JSON glitches: trailing commas and truncated tails.
+  const parsed = JSON.parse(repairJson(match[0])) as StudyPlan & { steps: Array<PlannedStep & { lane?: number }> };
   if (!Array.isArray(parsed.order) || !Array.isArray(parsed.steps)) throw new Error('bad plan shape');
   // Lift per-step lane hints into a lanes map if present.
   const lanes: Record<string, number> = {};
@@ -279,7 +313,7 @@ async function planWithOpenRouter(apiKey: string, pathTitle: string, nodes: Plan
     },
     body: JSON.stringify({
       model: process.env.STUDY_PLANNER_MODEL ?? 'anthropic/claude-3-haiku',
-      max_tokens: 1024,
+      max_tokens: 4096,
       messages: [{ role: 'user', content: buildPrompt(pathTitle, nodes) }],
     }),
   });
@@ -306,16 +340,20 @@ async function planWithAnthropic(apiKey: string, pathTitle: string, nodes: Plann
     },
     body: JSON.stringify({
       model: process.env.STUDY_PLANNER_MODEL ?? 'claude-3-5-haiku-latest',
-      max_tokens: 1024,
+      max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
   if (!response.ok) throw new Error(`anthropic ${response.status}`);
   const data = (await response.json()) as { content?: Array<{ text?: string }> };
   const text = data.content?.map((part) => part.text ?? '').join('') ?? '';
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('no JSON in response');
-  const parsed = JSON.parse(match[0]) as StudyPlan;
-  if (!Array.isArray(parsed.order) || !Array.isArray(parsed.steps)) throw new Error('bad plan shape');
-  return parsed;
+  return parsePlan(text);
+}
+
+// Best-effort repair of small JSON defects from LLM output: strip trailing
+// commas before } or ], and drop a dangling comma at the very end.
+function repairJson(input: string): string {
+  return input
+    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/,\s*$/, '');
 }

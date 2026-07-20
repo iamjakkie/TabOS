@@ -151,25 +151,34 @@ export class StudyRepository {
     return node;
   }
 
-  // Grid placement that avoids overlapping existing tiles. Tiles are ~220x120;
-  // we lay them out on a 260x150 grid, scanning row-major for the first free cell.
+  // Grid placement that avoids overlapping existing tiles using real bounding-box
+  // collision (tiles are ~210x120). We scan a grid row-major and return the first
+  // cell that doesn't intersect any existing tile, regardless of the grid other
+  // tiles were placed on (e.g. an AI-plan layout at different spacing).
   private nextCanvasSlot(pathId: string): { x: number; y: number } {
-    const COL_W = 260;
-    const ROW_H = 150;
+    const TILE_W = 210;
+    const TILE_H = 120;
+    const GAP = 40;
+    const COL_W = TILE_W + GAP;
+    const ROW_H = TILE_H + GAP;
     const COLS = 4;
     const MARGIN = 40;
-    const taken = this.all<{ canvas_x: number | null; canvas_y: number | null }>(
+    const existing = this.all<{ canvas_x: number | null; canvas_y: number | null }>(
       'SELECT canvas_x, canvas_y FROM study_path_nodes WHERE path_id = ? AND archived_at IS NULL',
       [pathId],
     ).filter((row) => row.canvas_x != null && row.canvas_y != null)
-      .map((row) => `${Math.round(Number(row.canvas_x))},${Math.round(Number(row.canvas_y))}`);
-    const occupied = new Set(taken);
+      .map((row) => ({ x: Number(row.canvas_x), y: Number(row.canvas_y) }));
+
+    const overlaps = (x: number, y: number) => existing.some((tile) =>
+      x < tile.x + TILE_W + GAP && x + TILE_W + GAP > tile.x &&
+      y < tile.y + TILE_H + GAP && y + TILE_H + GAP > tile.y);
+
     for (let index = 0; index < 10000; index += 1) {
       const col = index % COLS;
       const rowIdx = Math.floor(index / COLS);
       const x = MARGIN + col * COL_W;
       const y = MARGIN + rowIdx * ROW_H;
-      if (!occupied.has(`${x},${y}`)) return { x, y };
+      if (!overlaps(x, y)) return { x, y };
     }
     return { x: MARGIN, y: MARGIN };
   }
@@ -346,6 +355,13 @@ export class StudyRepository {
     const { planPath } = await import('./study-planner');
     const plan = await planPath(detail);
     return this.setPlan(plan);
+  }
+
+  async tidyLayout(pathId: string): Promise<StudyPathDetail | null> {
+    const detail = this.getPathDetail(pathId);
+    if (!detail || detail.nodes.length === 0) return detail;
+    const { tidyLayout } = await import('./study-planner');
+    return this.setPlan(tidyLayout(detail));
   }
 
   exportAll(): StudyExport {

@@ -128,7 +128,7 @@ async function createWindow(): Promise<void> {
     'study:list-paths', 'study:get-detail', 'study:create-path',
     'study:add-node', 'study:add-resources-bulk', 'study:record-progress', 'study:log-session',
     'study:update-node-position', 'study:add-edge', 'study:remove-edge', 'study:set-plan',
-    'study:plan-ai', 'study:export',
+    'study:plan-ai', 'study:tidy', 'study:export',
   ]) ipcMain.removeHandler(channel);
 
   ipcMain.handle('study:list-paths', () => studyRepository?.listPaths() ?? []);
@@ -143,6 +143,7 @@ async function createWindow(): Promise<void> {
   ipcMain.handle('study:remove-edge', (_event, edgeId: string) => studyRepository?.removeEdge(edgeId));
   ipcMain.handle('study:set-plan', (_event, input: SetPlanInput) => studyRepository?.setPlan(input) ?? null);
   ipcMain.handle('study:plan-ai', (_event, pathId: string) => studyRepository?.planWithAI(pathId) ?? null);
+  ipcMain.handle('study:tidy', (_event, pathId: string) => studyRepository?.tidyLayout(pathId) ?? null);
   ipcMain.handle('study:export', () => studyRepository?.exportAll());
 
   const rendererPath = path.join(__dirname, '../../renderer/index.html');

@@ -37,6 +37,7 @@ const studyBridge: StudyBridge = {
   removeEdge: (edgeId: string) => ipcRenderer.invoke('study:remove-edge', edgeId) as Promise<void>,
   setPlan: (input: SetPlanInput) => ipcRenderer.invoke('study:set-plan', input) as Promise<StudyPathDetail | null>,
   planWithAI: (pathId: string) => ipcRenderer.invoke('study:plan-ai', pathId) as Promise<StudyPathDetail | null>,
+  tidyLayout: (pathId: string) => ipcRenderer.invoke('study:tidy', pathId) as Promise<StudyPathDetail | null>,
   exportAll: () => ipcRenderer.invoke('study:export') as Promise<StudyExport>,
 };
 
