@@ -1,13 +1,16 @@
 import path from 'node:path';
 import { app, BaseWindow, ipcMain, Menu, session, WebContentsView } from 'electron';
 import type { BrowserCommand, BrowserLayout } from '../shared/browser';
+import type { AddNodeInput, CreatePathInput, LogSessionInput, RecordProgressInput } from '../shared/study';
 import { BrowserManager } from './browser-manager';
 import { SnapshotRepository } from './snapshot-repository';
+import { StudyRepository } from './study-repository';
 
 let mainWindow: BaseWindow | null = null;
 let shellView: WebContentsView | null = null;
 let browserManager: BrowserManager | null = null;
 let repository: SnapshotRepository | null = null;
+let studyRepository: StudyRepository | null = null;
 
 let browserLayout: BrowserLayout = { topInset: 52, brainHeight: 0 };
 
@@ -52,19 +55,13 @@ async function createWindow(): Promise<void> {
     callback(safeByDefault.has(permission));
   });
 
-  const dbPath = path.join(app.getPath('userData'), 'tabos.db');
-  repository = await SnapshotRepository.open(dbPath);
-
-  const savedSnapshot = repository.load();
-
-  browserManager = new BrowserManager(mainWindow, profile);
+  repository ??= await SnapshotRepository.open(path.join(app.getPath('userData'), 'tabos.db'));
+  studyRepository ??= await StudyRepository.open(path.join(app.getPath('userData'), 'tabos-study.db'));
+  browserManager = new BrowserManager(mainWindow, profile, repository);
   browserManager.setSnapshotListener((snapshot) => {
     if (!shellView?.webContents.isDestroyed()) {
       shellView?.webContents.send('browser:snapshot', snapshot);
     }
-  });
-  browserManager.setSaveListener((snapshot) => {
-    repository?.save(snapshot);
   });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -105,16 +102,26 @@ async function createWindow(): Promise<void> {
     updateLayout();
   });
 
+  for (const channel of [
+    'study:list-paths', 'study:get-detail', 'study:create-path',
+    'study:add-node', 'study:record-progress', 'study:log-session', 'study:export',
+  ]) ipcMain.removeHandler(channel);
+
+  ipcMain.handle('study:list-paths', () => studyRepository?.listPaths() ?? []);
+  ipcMain.handle('study:get-detail', (_event, pathId: string) => studyRepository?.getPathDetail(pathId) ?? null);
+  ipcMain.handle('study:create-path', (_event, input: CreatePathInput) => studyRepository?.createPath(input));
+  ipcMain.handle('study:add-node', (_event, input: AddNodeInput) => studyRepository?.addNode(input));
+  ipcMain.handle('study:record-progress', (_event, input: RecordProgressInput) => studyRepository?.recordProgress(input));
+  ipcMain.handle('study:log-session', (_event, input: LogSessionInput) => studyRepository?.logSession(input));
+  ipcMain.handle('study:export', () => studyRepository?.exportAll());
+
   const rendererPath = path.join(__dirname, '../../renderer/index.html');
   await shellView.webContents.loadFile(rendererPath);
-  await browserManager.initialize(savedSnapshot ?? undefined);
+  await browserManager.initialize();
   updateLayout();
 
   mainWindow.on('resize', updateLayout);
   mainWindow.on('closed', () => {
-    if (browserManager && repository) {
-      repository.save(browserManager.getSnapshot());
-    }
     browserManager?.destroy();
     browserManager = null;
     shellView = null;
@@ -130,11 +137,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
-  if (browserManager && repository) {
-    repository.save(browserManager.getSnapshot());
-    repository.close();
-    repository = null;
-  }
+  browserManager?.destroy();
+  repository?.close();
+  repository = null;
+  studyRepository?.close();
+  studyRepository = null;
 });
 
 app.on('window-all-closed', () => {

@@ -1,40 +1,127 @@
 import fs from 'node:fs';
-import initSqlJs from 'sql.js';
-import type { BrowserPathEvent, BrowserSnapshot } from '../shared/browser';
-import type { Database, SqlJsStatic } from 'sql.js';
+import path from 'node:path';
+import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
+import type { BrowserPathEvent, BrowserSnapshot, BrowserTab, RuntimeState } from '../shared/browser';
+
+let sqlPromise: Promise<SqlJsStatic> | undefined;
+
+function loadSql(): Promise<SqlJsStatic> {
+  sqlPromise ??= initSqlJs({
+    locateFile: (file) => require.resolve(`sql.js/dist/${file}`),
+  });
+  return sqlPromise;
+}
 
 export class SnapshotRepository {
-  private db: Database;
-  private readonly filename: string;
-  private static SQL: SqlJsStatic | null = null;
-
-  private constructor(db: Database, filename: string) {
-    this.db = db;
-    this.filename = filename;
+  private constructor(
+    private readonly filename: string,
+    private readonly db: Database,
+  ) {
+    this.migrate();
   }
 
   static async open(filename: string): Promise<SnapshotRepository> {
-    const SQL = SnapshotRepository.SQL ?? (await initSqlJs());
-    SnapshotRepository.SQL = SQL;
-
-    if (fs.existsSync(filename)) {
-      const buffer = fs.readFileSync(filename);
-      const db = new SQL.Database(buffer);
-      return new SnapshotRepository(db, filename);
-    }
-
-    const db = new SQL.Database();
-    SnapshotRepository.initSchema(db);
-    return new SnapshotRepository(db, filename);
+    const SQL = await loadSql();
+    const data = fs.existsSync(filename) ? fs.readFileSync(filename) : undefined;
+    return new SnapshotRepository(filename, data ? new SQL.Database(data) : new SQL.Database());
   }
 
-  private static initSchema(db: Database): void {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS app_state (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
+  load(): BrowserSnapshot | null {
+    const state = this.first<{ active_tab_id: string | null }>(
+      'SELECT active_tab_id FROM browser_state WHERE singleton = 1',
+    );
+    if (!state) return null;
+
+    const tabs = this.all<Record<string, unknown>>('SELECT * FROM browser_tabs ORDER BY position');
+    const visits = this.all<Record<string, unknown>>('SELECT * FROM browser_visits ORDER BY visited_at, position');
+
+    return {
+      activeTabId: state.active_tab_id,
+      tabs: tabs.map((row) => ({
+        id: String(row.id),
+        url: String(row.url),
+        title: String(row.title),
+        favicon: row.favicon == null ? undefined : String(row.favicon),
+        runtimeState: String(row.runtime_state) as RuntimeState,
+        isLoading: Boolean(row.is_loading),
+        canGoBack: Boolean(row.can_go_back),
+        canGoForward: Boolean(row.can_go_forward),
+        createdAt: Number(row.created_at),
+        lastActiveAt: Number(row.last_active_at),
+      } satisfies BrowserTab)),
+      path: visits.map((row) => ({
+        id: String(row.id),
+        tabId: String(row.tab_id),
+        url: String(row.url),
+        title: String(row.title),
+        visitedAt: Number(row.visited_at),
+        parentVisitId: row.parent_visit_id == null ? undefined : String(row.parent_visit_id),
+      } satisfies BrowserPathEvent)),
+    };
+  }
+
+  save(snapshot: BrowserSnapshot): void {
+    this.db.run('BEGIN IMMEDIATE');
+    try {
+      this.db.run('DELETE FROM browser_state');
+      this.db.run('DELETE FROM browser_visits');
+      this.db.run('DELETE FROM browser_tabs');
+      this.db.run(
+        'INSERT INTO browser_state(singleton, active_tab_id, saved_at) VALUES (1, ?, ?)',
+        [snapshot.activeTabId, Date.now()],
       );
-      CREATE TABLE IF NOT EXISTS tabs (
+
+      const tabStatement = this.db.prepare(`
+        INSERT INTO browser_tabs(
+          id, position, url, title, favicon, runtime_state, is_loading,
+          can_go_back, can_go_forward, created_at, last_active_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      snapshot.tabs.forEach((tab, position) => {
+        tabStatement.run([
+          tab.id, position, tab.url, tab.title, tab.favicon ?? null, tab.runtimeState,
+          tab.isLoading ? 1 : 0, tab.canGoBack ? 1 : 0, tab.canGoForward ? 1 : 0,
+          tab.createdAt, tab.lastActiveAt,
+        ]);
+      });
+      tabStatement.free();
+
+      const visitStatement = this.db.prepare(`
+        INSERT INTO browser_visits(id, position, tab_id, url, title, visited_at, parent_visit_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      snapshot.path.forEach((visit, position) => {
+        visitStatement.run([
+          visit.id, position, visit.tabId, visit.url, visit.title, visit.visitedAt,
+          visit.parentVisitId ?? null,
+        ]);
+      });
+      visitStatement.free();
+      this.db.run('COMMIT');
+      this.flush();
+    } catch (error) {
+      this.db.run('ROLLBACK');
+      throw error;
+    }
+  }
+
+  close(): void {
+    this.flush();
+    this.db.close();
+  }
+
+  private migrate(): void {
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS browser_schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS browser_state (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        active_tab_id TEXT,
+        saved_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS browser_tabs (
         id TEXT PRIMARY KEY,
         position INTEGER NOT NULL,
         url TEXT NOT NULL,
@@ -47,150 +134,35 @@ export class SnapshotRepository {
         created_at INTEGER NOT NULL,
         last_active_at INTEGER NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS visits (
+      CREATE TABLE IF NOT EXISTS browser_visits (
         id TEXT PRIMARY KEY,
+        position INTEGER NOT NULL,
         tab_id TEXT NOT NULL,
         url TEXT NOT NULL,
         title TEXT NOT NULL,
         visited_at INTEGER NOT NULL,
         parent_visit_id TEXT
       );
+      INSERT OR IGNORE INTO browser_schema_migrations(version, applied_at) VALUES (1, ${Date.now()});
     `);
   }
 
-  load(): BrowserSnapshot | null {
-    const rows = this.db.exec("SELECT value FROM app_state WHERE key = 'activeTabId'");
-    if (rows.length === 0 || rows[0].values.length === 0) return null;
-    const activeTabId = rows[0].values[0][0] as string;
-
-    const tabs: BrowserSnapshot['tabs'] = [];
-    const tabRows = this.db.exec(
-      `SELECT id, url, title, favicon, runtime_state, is_loading,
-              can_go_back, can_go_forward, created_at, last_active_at
-        FROM tabs
-        ORDER BY position ASC`,
-    );
-    if (tabRows.length > 0) {
-      for (const row of tabRows[0].values) {
-        const [
-          id,
-          url,
-          title,
-          favicon,
-          runtimeState,
-          isLoading,
-          canGoBack,
-          canGoForward,
-          createdAt,
-          lastActiveAt,
-        ] = row as [
-          string,
-          string,
-          string,
-          string | null,
-          string,
-          number,
-          number,
-          number,
-          number,
-          number,
-        ];
-        tabs.push({
-          id,
-          url,
-          title,
-          favicon: favicon ?? undefined,
-          runtimeState: runtimeState as 'hot' | 'warm' | 'cold',
-          isLoading: Boolean(isLoading),
-          canGoBack: Boolean(canGoBack),
-          canGoForward: Boolean(canGoForward),
-          createdAt,
-          lastActiveAt,
-        });
-      }
-    }
-
-    const path: BrowserPathEvent[] = [];
-    const visitRows = this.db.exec(
-      `SELECT id, tab_id, url, title, visited_at, parent_visit_id
-        FROM visits
-        ORDER BY visited_at ASC`,
-    );
-    if (visitRows.length > 0) {
-      for (const row of visitRows[0].values) {
-        const [id, tabId, url, title, visitedAt, parentVisitId] = row as [
-          string,
-          string,
-          string,
-          string,
-          number,
-          string | null,
-        ];
-        const event: BrowserPathEvent = { id, tabId, url, title, visitedAt };
-        if (parentVisitId) event.parentVisitId = parentVisitId;
-        path.push(event);
-      }
-    }
-
-    return { activeTabId, tabs, path };
+  private flush(): void {
+    fs.mkdirSync(path.dirname(this.filename), { recursive: true });
+    const temp = `${this.filename}.tmp`;
+    fs.writeFileSync(temp, Buffer.from(this.db.export()));
+    fs.renameSync(temp, this.filename);
   }
 
-  save(snapshot: BrowserSnapshot): void {
-    this.db.run('BEGIN TRANSACTION');
-    try {
-      this.db.run('DELETE FROM tabs');
-      this.db.run('DELETE FROM visits');
-      this.db.run("DELETE FROM app_state WHERE key = 'activeTabId'");
-
-      if (snapshot.activeTabId !== null) {
-        this.db.run("INSERT INTO app_state (key, value) VALUES ('activeTabId', ?)", [snapshot.activeTabId]);
-      }
-
-      for (let i = 0; i < snapshot.tabs.length; i++) {
-        const tab = snapshot.tabs[i];
-        this.db.run(
-          `INSERT INTO tabs
-            (id, position, url, title, favicon, runtime_state, is_loading,
-             can_go_back, can_go_forward, created_at, last_active_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            tab.id,
-            i,
-            tab.url,
-            tab.title,
-            tab.favicon ?? null,
-            tab.runtimeState,
-            tab.isLoading ? 1 : 0,
-            tab.canGoBack ? 1 : 0,
-            tab.canGoForward ? 1 : 0,
-            tab.createdAt,
-            tab.lastActiveAt,
-          ],
-        );
-      }
-
-      for (const event of snapshot.path) {
-        this.db.run(
-          `INSERT INTO visits
-            (id, tab_id, url, title, visited_at, parent_visit_id)
-            VALUES (?, ?, ?, ?, ?, ?)`,
-          [event.id, event.tabId, event.url, event.title, event.visitedAt, event.parentVisitId ?? null],
-        );
-      }
-
-      this.db.run('COMMIT');
-    } catch (error) {
-      this.db.run('ROLLBACK');
-      throw error;
-    }
-
-    const data = this.db.export();
-    const tempFile = this.filename + '.tmp';
-    fs.writeFileSync(tempFile, Buffer.from(data));
-    fs.renameSync(tempFile, this.filename);
+  private all<T>(sql: string): T[] {
+    const statement = this.db.prepare(sql);
+    const rows: T[] = [];
+    while (statement.step()) rows.push(statement.getAsObject() as T);
+    statement.free();
+    return rows;
   }
 
-  close(): void {
-    this.db.close();
+  private first<T>(sql: string): T | null {
+    return this.all<T>(sql)[0] ?? null;
   }
 }

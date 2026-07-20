@@ -519,21 +519,29 @@ cd /Users/jakkie/Dev/TabOS
 DEVELOPER_DIR=/Library/Developer/CommandLineTools git status --short --branch
 ```
 
-## 13. Definition of done for the current milestone
+## 13. Study Mode requirements
 
-The persistence milestone is complete only when:
+`STUDY_MODE.md` is an authoritative feature brief for a durability-first Study Mode / Learning Graph inside the current Electron app.
 
-1. repository round-trip tests pass
-2. all prior tests still pass
-3. typecheck passes
-4. build passes
-5. app writes `tabos.db` under user data
-6. open several tabs and branches
-7. close TabOS normally
-8. reopen TabOS
-9. tabs return in the same order
-10. active tab returns
-11. inactive tabs are cold
-12. Path returns with parent-child branches intact
-13. renderer budget remains enforced
-14. database survives another save/reopen cycle
+It adds these requirements:
+
+- learning paths can contain physical books, PDFs, articles/blogs, videos, courses, browser pages/tabs, and manual checkpoints
+- canonical persistent entities must include study paths, resources, path nodes, progress/history, study sessions, deliverables/proof artifacts, and schema migrations
+- progress must be generic across pages, lessons, minutes, items, read states, and binary checkpoints
+- data must use stable IDs, timestamps, migrations, append-friendly history, non-destructive evolution, exportability, and sync-friendly semantics
+- Study data must remain separate from ephemeral browser/app state
+- first usable UI must include path list, path detail/graph, resource/node cards, quick progress updates, session logging, deliverables, and path statistics
+- JSON export is required in the first slice
+- no AI workflows, mobile, sync, shell rewrite, native addons, or weakened tests in this phase
+- architecture remains Electron main + React renderer + typed IPC + sql.js
+
+The source brief currently claims SnapshotRepository persistence and interactive force graph are already integrated. The actual checked-out code does not match that claim: `snapshot-repository.test.ts` is RED and `snapshot-repository.ts` does not exist yet. Implement and verify browser persistence before treating those claims as complete.
+
+## 14. Immediate next action
+
+1. Finish and verify `SnapshotRepository` using sql.js.
+2. Integrate autosave/restore into BrowserManager and pass restart verification.
+3. Write a concise Study Mode implementation plan and schema proposal.
+4. Add versioned canonical Study schema and repository APIs under a separate study module.
+5. Implement the first usable Study UI and tests.
+6. Implement JSON export and developer durability note.

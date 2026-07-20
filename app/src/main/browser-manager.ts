@@ -8,7 +8,8 @@ import type { BrowserCommand, BrowserSnapshot, BrowserTab } from '../shared/brow
 import { createTab, normalizeNavigationInput, reduceTabState } from './tab-state';
 import { chooseTabsToFreeze } from './freeze-policy';
 import { appendPathEvent, createPathEvent, resolveVisitParent, selectSettledNavigation, type PathEvent } from './navigation-path';
-import { SnapshotRepository } from './snapshot-repository';
+import { normalizeRestoredSnapshot } from './snapshot-restore';
+import type { SnapshotRepository } from './snapshot-repository';
 
 const DEFAULT_URL = 'https://example.com';
 const MAX_LIVE_RENDERERS = 6;
@@ -30,27 +31,19 @@ export class BrowserManager {
   private activeVisitId: string | undefined;
   private contentBounds: Rectangle = { x: 288, y: 104, width: 912, height: 696 };
   private onSnapshot: (snapshot: BrowserSnapshot) => void = () => {};
-  private onRequestSave: (snapshot: BrowserSnapshot) => void = () => {};
 
   constructor(
     private readonly window: BaseWindow,
     private readonly browserSession: Session,
+    private readonly repository?: SnapshotRepository,
   ) {}
 
   setSnapshotListener(listener: (snapshot: BrowserSnapshot) => void): void {
     this.onSnapshot = listener;
   }
 
-  setSaveListener(listener: (snapshot: BrowserSnapshot) => void): void {
-    this.onRequestSave = listener;
-  }
-
   getSnapshot(): BrowserSnapshot {
     return { tabs: this.tabs, activeTabId: this.activeTabId, path: this.path };
-  }
-
-  private requestSave(): void {
-    this.onRequestSave(this.getSnapshot());
   }
 
   setBounds(bounds: Rectangle): void {
@@ -59,37 +52,28 @@ export class BrowserManager {
     active?.view.setBounds(bounds);
   }
 
-  async initialize(snapshot?: BrowserSnapshot): Promise<void> {
-    if (snapshot && snapshot.tabs.length > 0) {
-      this.tabs = snapshot.tabs.map((tab) => ({
-        ...tab,
-        isLoading: false,
-        canGoBack: false,
-        canGoForward: false,
-        runtimeState: snapshot.activeTabId === tab.id ? 'hot' : 'cold',
-      }));
-      this.activeTabId = snapshot.activeTabId;
-      this.path = snapshot.path;
-      // Mark last visits
-      for (const event of this.path) {
-        this.lastVisitByTab.set(event.tabId, event.id);
+  async initialize(): Promise<void> {
+    const stored = this.repository?.load();
+    if (stored?.tabs.length) {
+      const restored = normalizeRestoredSnapshot(stored);
+      this.tabs = restored.tabs;
+      this.path = restored.path;
+      this.activeTabId = restored.activeTabId;
+      for (const visit of this.path) this.lastVisitByTab.set(visit.tabId, visit.id);
+      this.activeVisitId = this.activeTabId ? this.lastVisitByTab.get(this.activeTabId) : undefined;
+
+      const active = this.activeTabId ? this.tabs.find((tab) => tab.id === this.activeTabId) : undefined;
+      if (active) {
+        const view = this.createView(active.id);
+        this.views.set(active.id, { view, lastUsedAt: Date.now() });
+        this.showOnly(active.id);
+        this.suppressPathForTab.add(active.id);
+        this.emit();
+        await view.webContents.loadURL(active.url);
+        return;
       }
-      // Restore active tab only
-      if (this.activeTabId) {
-        const activeTab = this.tabs.find((t) => t.id === this.activeTabId);
-        if (activeTab) {
-          this.activeVisitId = this.lastVisitByTab.get(this.activeTabId);
-          const view = this.createView(this.activeTabId);
-          this.views.set(this.activeTabId, { view, lastUsedAt: Date.now() });
-          this.showOnly(this.activeTabId);
-          this.suppressPathForTab.add(this.activeTabId);
-          await view.webContents.loadURL(activeTab.url);
-        }
-      }
-      this.emit();
-    } else {
-      await this.newTab(DEFAULT_URL);
     }
+    await this.newTab(DEFAULT_URL);
   }
 
   async handle(command: BrowserCommand): Promise<BrowserSnapshot> {
@@ -127,7 +111,6 @@ export class BrowserManager {
         const omitted = this.tabs.filter((tab) => !command.tabIds.includes(tab.id));
         this.tabs = [...reordered, ...omitted];
         this.emit();
-        this.requestSave();
         break;
       }
     }
@@ -135,6 +118,7 @@ export class BrowserManager {
   }
 
   destroy(): void {
+    this.persist();
     for (const { view } of this.views.values()) {
       this.window.contentView.removeChildView(view);
       view.webContents.close();
@@ -157,7 +141,6 @@ export class BrowserManager {
     this.emit();
     await view.webContents.loadURL(url);
     this.evictExcessViews();
-    this.requestSave();
   }
 
   private async activateTab(tabId: string): Promise<void> {
@@ -200,7 +183,6 @@ export class BrowserManager {
       else await this.newTab(DEFAULT_URL);
     } else {
       this.emit();
-      this.requestSave();
     }
   }
 
@@ -344,6 +326,12 @@ export class BrowserManager {
   }
 
   private emit(): void {
-    this.onSnapshot(this.getSnapshot());
+    const snapshot = this.getSnapshot();
+    this.repository?.save(snapshot);
+    this.onSnapshot(snapshot);
+  }
+
+  private persist(): void {
+    this.repository?.save(this.getSnapshot());
   }
 }
