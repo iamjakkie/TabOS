@@ -5,6 +5,9 @@ import type { AddEdgeInput, AddNodeInput, CreatePathInput, CreateResourceInput, 
 import { BrowserManager } from './browser-manager';
 import { SnapshotRepository } from './snapshot-repository';
 import { StudyRepository } from './study-repository';
+import { loadLocalEnv } from './load-env';
+
+loadLocalEnv(app.getAppPath());
 
 let mainWindow: BaseWindow | null = null;
 let shellView: WebContentsView | null = null;

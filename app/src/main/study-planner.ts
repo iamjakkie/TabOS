@@ -34,10 +34,12 @@ export async function planPath(detail: StudyPathDetail): Promise<SetPlanInput> {
   const validIds = new Set(nodes.map((n) => n.id));
 
   let plan: StudyPlan | null = null;
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.STUDY_PLANNER_API_KEY;
-  if (apiKey && nodes.length > 1) {
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY ?? process.env.STUDY_PLANNER_API_KEY;
+  if (nodes.length > 1) {
     try {
-      plan = await planWithAnthropic(apiKey, detail.path.title, nodes);
+      if (openRouterKey) plan = await planWithOpenRouter(openRouterKey, detail.path.title, nodes);
+      else if (anthropicKey) plan = await planWithAnthropic(anthropicKey, detail.path.title, nodes);
     } catch (error) {
       console.warn('[study-planner] AI planning failed, using fallback:', error);
       plan = null;
@@ -117,6 +119,44 @@ function layoutFromOrder(order: string[], edges: SetPlanInput['edges']): Record<
 }
 
 interface PlannerNode { id: string; title: string; type: string; units: number | null; unitKind: string | null }
+
+function buildPrompt(pathTitle: string, nodes: PlannerNode[]): string {
+  const catalog = nodes.map((n) => `- id=${n.id} | ${n.type} | "${n.title}"${n.units ? ` (${n.units} ${n.unitKind ?? 'units'})` : ''}`).join('\n');
+  return `You are sequencing a personal learning path titled "${pathTitle}".\n`
+    + `Here are the learning resources (tiles). Order them from foundational to advanced and declare prerequisites.\n\n`
+    + `${catalog}\n\n`
+    + `Return ONLY compact JSON of this exact shape, using the given ids:\n`
+    + `{"order":["id",...],"steps":[{"nodeId":"id","dependsOn":["id",...]}]}`;
+}
+
+function parsePlan(text: string): StudyPlan {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('no JSON in response');
+  const parsed = JSON.parse(match[0]) as StudyPlan;
+  if (!Array.isArray(parsed.order) || !Array.isArray(parsed.steps)) throw new Error('bad plan shape');
+  return parsed;
+}
+
+async function planWithOpenRouter(apiKey: string, pathTitle: string, nodes: PlannerNode[]): Promise<StudyPlan> {
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://tabos.local',
+      'X-Title': 'TabOS Study Mode',
+    },
+    body: JSON.stringify({
+      model: process.env.STUDY_PLANNER_MODEL ?? 'anthropic/claude-3-haiku',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: buildPrompt(pathTitle, nodes) }],
+    }),
+  });
+  if (!response.ok) throw new Error(`openrouter ${response.status}: ${await response.text()}`);
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const text = data.choices?.[0]?.message?.content ?? '';
+  return parsePlan(text);
+}
 
 async function planWithAnthropic(apiKey: string, pathTitle: string, nodes: PlannerNode[]): Promise<StudyPlan> {
   const catalog = nodes.map((n) => `- id=${n.id} | ${n.type} | "${n.title}"${n.units ? ` (${n.units} ${n.unitKind ?? 'units'})` : ''}`).join('\n');
