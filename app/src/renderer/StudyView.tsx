@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type {
-  StudyPath, StudyPathDetail, StudyPathStats, StudyResourceType, StudyUnitKind,
+  StudyDeliverableType, StudyPath, StudyPathDetail, StudyPathStats,
+  StudyResourceType, StudyUnitKind,
 } from '../shared/study';
 
 type PathSummary = { path: StudyPath; stats: StudyPathStats };
@@ -21,6 +22,7 @@ export function StudyView() {
   const [paths, setPaths] = useState<PathSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StudyPathDetail | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const refreshPaths = useCallback(async () => {
     const listed = await window.study.listPaths();
@@ -35,10 +37,12 @@ export function StudyView() {
   useEffect(() => { void refreshPaths(); }, [refreshPaths]);
   useEffect(() => { if (selectedId) void refreshDetail(selectedId); }, [selectedId, refreshDetail]);
 
-  async function createPath() {
-    const title = window.prompt('New learning path title');
-    if (!title?.trim()) return;
-    const created = await window.study.createPath({ title: title.trim() });
+  async function createPath(title: string, description: string) {
+    const created = await window.study.createPath({
+      title: title.trim(),
+      description: description.trim() || null,
+    });
+    setCreating(false);
     await refreshPaths();
     setSelectedId(created.id);
   }
@@ -70,10 +74,13 @@ export function StudyView() {
         <h2>Learning paths</h2>
         <div className="study-toolbar-actions">
           <button onClick={() => void exportStudy()} className="ghost">Export JSON</button>
-          <button onClick={() => void createPath()} className="primary">＋ New path</button>
+          <button onClick={() => setCreating((v) => !v)} className="primary">＋ New path</button>
         </div>
       </div>
-      {paths.length === 0 ? (
+
+      {creating && <NewPathForm onCancel={() => setCreating(false)} onCreate={createPath} />}
+
+      {paths.length === 0 && !creating ? (
         <p className="study-empty">No learning paths yet. Create one to start tracking books, courses, videos, and checkpoints.</p>
       ) : (
         <div className="study-path-grid">
@@ -92,25 +99,38 @@ export function StudyView() {
   );
 }
 
+function NewPathForm({ onCreate, onCancel }: {
+  onCreate: (title: string, description: string) => Promise<void>; onCancel: () => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  return (
+    <form
+      className="study-form"
+      onSubmit={(event) => { event.preventDefault(); if (title.trim()) void onCreate(title, description); }}
+    >
+      <label>
+        <span>Path title</span>
+        <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Kalman Filtering for UAV Navigation" />
+      </label>
+      <label>
+        <span>Description (optional)</span>
+        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this path for?" />
+      </label>
+      <div className="study-form-actions">
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="primary" disabled={!title.trim()}>Create path</button>
+      </div>
+    </form>
+  );
+}
+
 function StudyPathView({ detail, onBack, onChanged }: {
   detail: StudyPathDetail; onBack: () => void; onChanged: () => Promise<void>;
 }) {
   const { path, nodes, stats } = detail;
-
-  async function addResource() {
-    const title = window.prompt('Resource title (book, video, article, course, checkpoint…)');
-    if (!title?.trim()) return;
-    const type = (window.prompt(`Type: ${RESOURCE_TYPES.join(', ')}`, 'book') ?? 'book').trim() as StudyResourceType;
-    const resourceType = RESOURCE_TYPES.includes(type) ? type : 'article';
-    const unitKind = UNIT_BY_TYPE[resourceType];
-    let totalUnits: number | null = null;
-    if (unitKind !== 'binary') {
-      const raw = window.prompt(`Total ${unitKind} (optional)`, '');
-      totalUnits = raw && Number.isFinite(Number(raw)) ? Number(raw) : null;
-    }
-    await window.study.addNode({ pathId: path.id, resource: { resourceType, title: title.trim(), unitKind, totalUnits } });
-    await onChanged();
-  }
+  const [addingResource, setAddingResource] = useState(false);
+  const [sessionNodeId, setSessionNodeId] = useState<string | null>(null);
 
   async function bumpProgress(nodeId: string, delta: number) {
     await window.study.recordProgress({ nodeId, unitsDelta: delta });
@@ -122,26 +142,12 @@ function StudyPathView({ detail, onBack, onChanged }: {
     await onChanged();
   }
 
-  async function logSession(nodeId: string) {
-    const raw = window.prompt('Minutes studied', '30');
-    const minutes = raw && Number.isFinite(Number(raw)) ? Number(raw) : 0;
-    if (minutes <= 0) return;
-    const takeaway = window.prompt('Key takeaway / proof (optional)', '') ?? '';
-    await window.study.logSession({
-      pathId: path.id,
-      nodeId,
-      durationSeconds: Math.round(minutes * 60),
-      deliverable: takeaway.trim() ? { deliverableType: 'takeaway', content: takeaway.trim() } : null,
-    });
-    await onChanged();
-  }
-
   return (
     <div className="study-view">
       <div className="study-toolbar">
         <button className="ghost" onClick={onBack}>← Paths</button>
         <h2>{path.title}</h2>
-        <button className="primary" onClick={() => void addResource()}>＋ Resource</button>
+        <button className="primary" onClick={() => setAddingResource((v) => !v)}>＋ Resource</button>
       </div>
 
       <div className="study-stats-header">
@@ -151,7 +157,15 @@ function StudyPathView({ detail, onBack, onChanged }: {
         <Stat label="Sessions" value={String(stats.sessionCount)} />
       </div>
 
-      {nodes.length === 0 ? (
+      {addingResource && (
+        <AddResourceForm
+          pathId={path.id}
+          onCancel={() => setAddingResource(false)}
+          onAdded={async () => { setAddingResource(false); await onChanged(); }}
+        />
+      )}
+
+      {nodes.length === 0 && !addingResource ? (
         <p className="study-empty">No resources yet. Add a book, course, video, article, or checkpoint.</p>
       ) : (
         <div className="study-node-list">
@@ -172,13 +186,123 @@ function StudyPathView({ detail, onBack, onChanged }: {
                 {resource.unitKind !== 'binary' && <button onClick={() => void bumpProgress(node.id, 1)}>+1</button>}
                 {resource.unitKind !== 'binary' && <button onClick={() => void bumpProgress(node.id, 10)}>+10</button>}
                 {progress.completionState !== 'completed' && <button onClick={() => void complete(node.id)}>Done</button>}
-                <button onClick={() => void logSession(node.id)}>Log session</button>
+                <button onClick={() => setSessionNodeId((id) => (id === node.id ? null : node.id))}>Log session</button>
               </div>
+              {sessionNodeId === node.id && (
+                <LogSessionForm
+                  pathId={path.id}
+                  nodeId={node.id}
+                  onCancel={() => setSessionNodeId(null)}
+                  onLogged={async () => { setSessionNodeId(null); await onChanged(); }}
+                />
+              )}
             </article>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function AddResourceForm({ pathId, onAdded, onCancel }: {
+  pathId: string; onAdded: () => Promise<void>; onCancel: () => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [resourceType, setResourceType] = useState<StudyResourceType>('book');
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [totalUnits, setTotalUnits] = useState('');
+  const unitKind = UNIT_BY_TYPE[resourceType];
+
+  async function submit() {
+    if (!title.trim()) return;
+    const parsed = Number(totalUnits);
+    await window.study.addNode({
+      pathId,
+      resource: {
+        resourceType,
+        title: title.trim(),
+        sourceUrl: sourceUrl.trim() || null,
+        unitKind,
+        totalUnits: unitKind !== 'binary' && totalUnits && Number.isFinite(parsed) ? parsed : null,
+      },
+    });
+    await onAdded();
+  }
+
+  return (
+    <form className="study-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <label>
+        <span>Title</span>
+        <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Resource title" />
+      </label>
+      <div className="study-form-row">
+        <label>
+          <span>Type</span>
+          <select value={resourceType} onChange={(e) => setResourceType(e.target.value as StudyResourceType)}>
+            {RESOURCE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </label>
+        {unitKind !== 'binary' && (
+          <label>
+            <span>Total {unitKind} (optional)</span>
+            <input type="number" min="0" value={totalUnits} onChange={(e) => setTotalUnits(e.target.value)} placeholder="0" />
+          </label>
+        )}
+      </div>
+      <label>
+        <span>Source URL (optional)</span>
+        <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://…" />
+      </label>
+      <div className="study-form-actions">
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="primary" disabled={!title.trim()}>Add resource</button>
+      </div>
+    </form>
+  );
+}
+
+function LogSessionForm({ pathId, nodeId, onLogged, onCancel }: {
+  pathId: string; nodeId: string; onLogged: () => Promise<void>; onCancel: () => void;
+}) {
+  const [minutes, setMinutes] = useState('30');
+  const [deliverableType, setDeliverableType] = useState<StudyDeliverableType>('takeaway');
+  const [content, setContent] = useState('');
+
+  async function submit() {
+    const parsed = Number(minutes);
+    if (!parsed || !Number.isFinite(parsed) || parsed <= 0) return;
+    await window.study.logSession({
+      pathId,
+      nodeId,
+      durationSeconds: Math.round(parsed * 60),
+      deliverable: content.trim() ? { deliverableType, content: content.trim() } : null,
+    });
+    await onLogged();
+  }
+
+  return (
+    <form className="study-form study-session-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <div className="study-form-row">
+        <label>
+          <span>Minutes studied</span>
+          <input autoFocus type="number" min="1" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+        </label>
+        <label>
+          <span>Proof type</span>
+          <select value={deliverableType} onChange={(e) => setDeliverableType(e.target.value as StudyDeliverableType)}>
+            {(['takeaway', 'note', 'exercise', 'code', 'summary'] as StudyDeliverableType[]).map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+      </div>
+      <label>
+        <span>Key takeaway / proof (optional)</span>
+        <input value={content} onChange={(e) => setContent(e.target.value)} placeholder="What did you learn or produce?" />
+      </label>
+      <div className="study-form-actions">
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="primary">Log session</button>
+      </div>
+    </form>
   );
 }
 
