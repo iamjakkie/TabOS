@@ -12,6 +12,8 @@ export interface StudyPlan {
   // Optional parallel-track assignment: nodeId -> lane index. Nodes in different
   // lanes at the same depth are studied in parallel and laid out on separate rows.
   lanes?: Record<string, number>;
+  // Optional per-node difficulty (0-100) used to order/place easy -> hard.
+  difficulty?: Record<string, number>;
 }
 
 // Difficulty heuristic used by the deterministic fallback: foundational material
@@ -74,7 +76,7 @@ export async function planPath(detail: StudyPathDetail): Promise<SetPlanInput> {
     pathId: detail.path.id,
     edges,
     order,
-    layout: layoutFromOrder(order, edges, lanes),
+    layout: layoutFromOrder(order, edges, lanes, plan.difficulty),
   };
 }
 
@@ -238,6 +240,7 @@ function layoutFromOrder(
   order: string[],
   edges: SetPlanInput['edges'],
   lanes: Record<string, number>,
+  difficulty?: Record<string, number>,
 ): Record<string, { x: number; y: number }> {
   const COL_W = 250;
   const ROW_H = 150;
@@ -252,6 +255,25 @@ function layoutFromOrder(
       if (d !== depth.get(edge.targetNodeId)) { depth.set(edge.targetNodeId, d); changed = true; }
     }
     if (!changed) break;
+  }
+
+  // When difficulty is known, rank nodes globally by difficulty and use that
+  // rank as the column, so the whole graph reads strictly easy (left) -> hard
+  // (right). We still keep dependents to the right of their prerequisites.
+  if (difficulty) {
+    const ranked = [...order].sort((a, b) => (difficulty[a] ?? 50) - (difficulty[b] ?? 50));
+    const colByNode = new Map<string, number>();
+    ranked.forEach((nodeId, index) => colByNode.set(nodeId, index));
+    // Enforce dependency monotonicity: a target sits right of all its sources.
+    for (let pass = 0; pass < order.length; pass += 1) {
+      let changed = false;
+      for (const edge of edges) {
+        const need = (colByNode.get(edge.sourceNodeId) ?? 0) + 1;
+        if ((colByNode.get(edge.targetNodeId) ?? 0) < need) { colByNode.set(edge.targetNodeId, need); changed = true; }
+      }
+      if (!changed) break;
+    }
+    for (const nodeId of order) depth.set(nodeId, colByNode.get(nodeId) ?? 0);
   }
 
   // Compact lane indices to consecutive rows.
@@ -277,28 +299,40 @@ interface PlannerNode { id: string; title: string; type: string; units: number |
 
 function buildPrompt(pathTitle: string, nodes: PlannerNode[]): string {
   const catalog = nodes.map((n) => `- id=${n.id} | ${n.type} | "${n.title}"${n.units ? ` (${n.units} ${n.unitKind ?? 'units'})` : ''}`).join('\n');
-  return `You are sequencing a personal learning path titled "${pathTitle}".\n`
-    + `Here are the learning resources (tiles). Build a dependency graph (DAG), not a single line.\n`
-    + `Group resources on the same topic into a track; different topics are separate PARALLEL tracks that can be studied at the same time.\n`
-    + `A resource may depend on multiple prerequisites. Checkpoints/projects should depend on the tracks they build on.\n\n`
-    + `${catalog}\n\n`
-    + `Return ONLY compact JSON of this exact shape, using the given ids. "lane" is the parallel-track index (0,1,2,...) for layout:\n`
-    + `{"order":["id",...],"steps":[{"nodeId":"id","dependsOn":["id",...],"lane":0}]}`;
+  return `You are an expert curriculum designer sequencing a personal learning path titled "${pathTitle}".\n\n`
+    + `STEP 1 - Rate difficulty. For EACH resource, judge its intrinsic difficulty and the background it assumes, using your knowledge of the actual titles/subjects. Assign "difficulty" on a 0-100 scale:\n`
+    + `  0-25 = introductory / no prerequisites (basics, "intro to", primers, fundamentals)\n`
+    + `  26-50 = intermediate (assumes the basics)\n`
+    + `  51-75 = advanced (assumes intermediate mastery)\n`
+    + `  76-100 = expert / research-level or a capstone project applying everything.\n\n`
+    + `STEP 2 - Order strictly from EASIEST to HARDEST. The path must always start with the most basic resources and build up. A resource may only depend on resources that are strictly easier (lower difficulty). Never create a prerequisite from a harder resource to an easier one.\n\n`
+    + `STEP 3 - Build a DAG, not one long line. Group resources on the same subject into a track and order that track easy->hard. Different subjects are separate PARALLEL tracks (different "lane") that can be studied at the same time. A resource may have multiple prerequisites. Checkpoints/projects are usually the hardest and depend on the tracks they apply.\n\n`
+    + `Resources:\n${catalog}\n\n`
+    + `Return ONLY compact JSON of this exact shape, using the given ids. "order" MUST be sorted ascending by difficulty. "lane" is the parallel-track index (0,1,2,...):\n`
+    + `{"order":["id",...],"steps":[{"nodeId":"id","difficulty":0,"dependsOn":["id",...],"lane":0}]}`;
 }
 
 function parsePlan(text: string): StudyPlan {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('no JSON in response');
   // Tolerate common LLM JSON glitches: trailing commas and truncated tails.
-  const parsed = JSON.parse(repairJson(match[0])) as StudyPlan & { steps: Array<PlannedStep & { lane?: number }> };
+  const parsed = JSON.parse(repairJson(match[0])) as StudyPlan & { steps: Array<PlannedStep & { lane?: number; difficulty?: number }> };
   if (!Array.isArray(parsed.order) || !Array.isArray(parsed.steps)) throw new Error('bad plan shape');
-  // Lift per-step lane hints into a lanes map if present.
+  // Lift per-step lane + difficulty hints into maps if present.
   const lanes: Record<string, number> = {};
+  const difficulty: Record<string, number> = {};
   let hasLanes = false;
+  let hasDifficulty = false;
   for (const step of parsed.steps) {
     if (typeof step.lane === 'number') { lanes[step.nodeId] = step.lane; hasLanes = true; }
+    if (typeof step.difficulty === 'number') { difficulty[step.nodeId] = step.difficulty; hasDifficulty = true; }
   }
   if (hasLanes) parsed.lanes = lanes;
+  if (hasDifficulty) {
+    parsed.difficulty = difficulty;
+    // Safety net: enforce easy -> hard ordering even if the model's order slipped.
+    parsed.order = [...parsed.order].sort((a, b) => (difficulty[a] ?? 50) - (difficulty[b] ?? 50));
+  }
   return parsed;
 }
 
