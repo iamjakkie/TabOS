@@ -9,6 +9,9 @@ export interface PlannedStep {
 export interface StudyPlan {
   order: string[];
   steps: PlannedStep[];
+  // Optional parallel-track assignment: nodeId -> lane index. Nodes in different
+  // lanes at the same depth are studied in parallel and laid out on separate rows.
+  lanes?: Record<string, number>;
 }
 
 // Difficulty heuristic used by the deterministic fallback: foundational material
@@ -48,6 +51,8 @@ export async function planPath(detail: StudyPathDetail): Promise<SetPlanInput> {
 
   if (!plan) plan = fallbackPlan(nodes);
 
+  const lanes = plan.lanes ?? inferLanes(plan);
+
   // Sanitize: keep only edges/order referencing real nodes.
   const order = plan.order.filter((nodeId) => validIds.has(nodeId));
   for (const nodeId of validIds) if (!order.includes(nodeId)) order.push(nodeId);
@@ -69,31 +74,139 @@ export async function planPath(detail: StudyPathDetail): Promise<SetPlanInput> {
     pathId: detail.path.id,
     edges,
     order,
-    layout: layoutFromOrder(order, edges),
+    layout: layoutFromOrder(order, edges, lanes),
   };
 }
 
-// Deterministic fallback: sort by (type rank, larger units first, title) and
-// chain each node to the previous one as a prerequisite.
-function fallbackPlan(nodes: Array<{ id: string; title: string; type: string; units: number | null }>): StudyPlan {
-  const sorted = [...nodes].sort((a, b) => {
-    const rank = (TYPE_RANK[a.type] ?? 9) - (TYPE_RANK[b.type] ?? 9);
-    if (rank !== 0) return rank;
-    const units = (b.units ?? 0) - (a.units ?? 0);
-    if (units !== 0) return units;
-    return a.title.localeCompare(b.title);
+type PlanNode = { id: string; title: string; type: string; units: number | null };
+
+// Deterministic fallback that produces PARALLEL tracks instead of one long chain:
+//  1. Cluster learning material into tracks by shared title keywords (union-find).
+//  2. Order and chain each track internally (foundational -> advanced).
+//  3. Treat checkpoints/projects as convergence nodes that depend on every
+//     track's tail (fan-in), so independent tracks run side by side.
+function fallbackPlan(nodes: PlanNode[]): StudyPlan {
+  const checkpoints = nodes.filter((n) => n.type === 'checkpoint');
+  const material = nodes.filter((n) => n.type !== 'checkpoint');
+
+  const tracks = material.length ? clusterByKeyword(material) : [];
+  const steps: PlannedStep[] = [];
+  const lanes: Record<string, number> = {};
+  const order: string[] = [];
+  const trackTails: string[] = [];
+
+  tracks.forEach((track, laneIndex) => {
+    const sorted = [...track].sort(compareMaterial);
+    sorted.forEach((node, index) => {
+      lanes[node.id] = laneIndex;
+      order.push(node.id);
+      steps.push({ nodeId: node.id, dependsOn: index === 0 ? [] : [sorted[index - 1]!.id] });
+    });
+    if (sorted.length) trackTails.push(sorted[sorted.length - 1]!.id);
   });
-  const order = sorted.map((n) => n.id);
-  const steps: PlannedStep[] = sorted.map((node, index) => ({
-    nodeId: node.id,
-    dependsOn: index === 0 ? [] : [sorted[index - 1]!.id],
-  }));
-  return { order, steps };
+
+  // Checkpoints converge from all track tails; stack them in their own lane.
+  const checkpointLane = tracks.length;
+  checkpoints.sort(compareMaterial).forEach((node) => {
+    lanes[node.id] = checkpointLane;
+    order.push(node.id);
+    steps.push({ nodeId: node.id, dependsOn: [...trackTails] });
+  });
+
+  return { order, steps, lanes };
 }
 
-// Lay out nodes along their topological depth so the graph reads left-to-right.
-function layoutFromOrder(order: string[], edges: SetPlanInput['edges']): Record<string, { x: number; y: number }> {
-  const COL_W = 280;
+function compareMaterial(a: PlanNode, b: PlanNode): number {
+  const rank = (TYPE_RANK[a.type] ?? 9) - (TYPE_RANK[b.type] ?? 9);
+  if (rank !== 0) return rank;
+  const units = (b.units ?? 0) - (a.units ?? 0);
+  if (units !== 0) return units;
+  return a.title.localeCompare(b.title);
+}
+
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'with', 'from',
+  'intro', 'introduction', 'guide', 'course', 'book', 'video', 'part', 'vol',
+  'volume', 'basics', 'fundamentals', 'advanced', 'beginner', 'complete',
+  'learn', 'learning', 'tutorial', 'series', 'how', 'your', 'you',
+]);
+
+function tokenize(title: string): string[] {
+  return title.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+    .filter((token) => token.length > 2 && !STOP_WORDS.has(token));
+}
+
+// Union-find clustering: nodes sharing a significant title keyword join the same
+// track. Unrelated titles form separate (parallel) tracks.
+function clusterByKeyword(nodes: PlanNode[]): PlanNode[][] {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    parent.set(x, root);
+    return root;
+  };
+  const union = (a: string, b: string) => { parent.set(find(a), find(b)); };
+  for (const node of nodes) parent.set(node.id, node.id);
+
+  const byToken = new Map<string, string[]>();
+  for (const node of nodes) {
+    for (const token of tokenize(node.title)) {
+      const list = byToken.get(token) ?? [];
+      list.push(node.id);
+      byToken.set(token, list);
+    }
+  }
+  for (const ids of byToken.values()) {
+    for (let i = 1; i < ids.length; i += 1) union(ids[0]!, ids[i]!);
+  }
+
+  const groups = new Map<string, PlanNode[]>();
+  for (const node of nodes) {
+    const root = find(node.id);
+    const list = groups.get(root) ?? [];
+    list.push(node);
+    groups.set(root, list);
+  }
+  // Largest tracks first for stable lane ordering.
+  return [...groups.values()].sort((a, b) => b.length - a.length);
+}
+
+// When lanes aren't provided (e.g. from the LLM), derive them from weakly
+// connected components of the dependency graph so disjoint chains get their own row.
+function inferLanes(plan: StudyPlan): Record<string, number> {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    parent.set(x, parent.get(x) ?? x);
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    parent.set(x, root);
+    return root;
+  };
+  const union = (a: string, b: string) => { parent.set(find(a), find(b)); };
+  for (const id of plan.order) find(id);
+  for (const step of plan.steps) for (const dep of step.dependsOn) union(dep, step.nodeId);
+
+  const laneByRoot = new Map<string, number>();
+  const lanes: Record<string, number> = {};
+  let next = 0;
+  for (const id of plan.order) {
+    const root = find(id);
+    if (!laneByRoot.has(root)) laneByRoot.set(root, next++);
+    lanes[id] = laneByRoot.get(root)!;
+  }
+  return lanes;
+}
+
+// Lay out nodes so the graph reads left-to-right by dependency depth (X) and
+// stacks parallel tracks on separate rows (Y = lane). This keeps DAGs compact
+// instead of stretching every node into one long diagonal.
+function layoutFromOrder(
+  order: string[],
+  edges: SetPlanInput['edges'],
+  lanes: Record<string, number>,
+): Record<string, { x: number; y: number }> {
+  const COL_W = 250;
   const ROW_H = 150;
   const MARGIN = 40;
   const depth = new Map<string, number>();
@@ -107,12 +220,21 @@ function layoutFromOrder(order: string[], edges: SetPlanInput['edges']): Record<
     }
     if (!changed) break;
   }
-  const rowByCol = new Map<number, number>();
+
+  // Compact lane indices to consecutive rows.
+  const laneValues = [...new Set(order.map((id) => lanes[id] ?? 0))].sort((a, b) => a - b);
+  const rowByLane = new Map<number, number>();
+  laneValues.forEach((lane, index) => rowByLane.set(lane, index));
+
   const layout: Record<string, { x: number; y: number }> = {};
+  const usedCell = new Map<string, number>(); // "col,row" -> stack offset for collisions
   for (const nodeId of order) {
     const col = depth.get(nodeId) ?? 0;
-    const row = rowByCol.get(col) ?? 0;
-    rowByCol.set(col, row + 1);
+    let row = rowByLane.get(lanes[nodeId] ?? 0) ?? 0;
+    // Resolve two nodes landing on the same (col,row) by nudging down.
+    let cell = `${col},${row}`;
+    while (usedCell.has(cell)) { row += laneValues.length || 1; cell = `${col},${row}`; }
+    usedCell.set(cell, 1);
     layout[nodeId] = { x: MARGIN + col * COL_W, y: MARGIN + row * ROW_H };
   }
   return layout;
@@ -123,17 +245,26 @@ interface PlannerNode { id: string; title: string; type: string; units: number |
 function buildPrompt(pathTitle: string, nodes: PlannerNode[]): string {
   const catalog = nodes.map((n) => `- id=${n.id} | ${n.type} | "${n.title}"${n.units ? ` (${n.units} ${n.unitKind ?? 'units'})` : ''}`).join('\n');
   return `You are sequencing a personal learning path titled "${pathTitle}".\n`
-    + `Here are the learning resources (tiles). Order them from foundational to advanced and declare prerequisites.\n\n`
+    + `Here are the learning resources (tiles). Build a dependency graph (DAG), not a single line.\n`
+    + `Group resources on the same topic into a track; different topics are separate PARALLEL tracks that can be studied at the same time.\n`
+    + `A resource may depend on multiple prerequisites. Checkpoints/projects should depend on the tracks they build on.\n\n`
     + `${catalog}\n\n`
-    + `Return ONLY compact JSON of this exact shape, using the given ids:\n`
-    + `{"order":["id",...],"steps":[{"nodeId":"id","dependsOn":["id",...]}]}`;
+    + `Return ONLY compact JSON of this exact shape, using the given ids. "lane" is the parallel-track index (0,1,2,...) for layout:\n`
+    + `{"order":["id",...],"steps":[{"nodeId":"id","dependsOn":["id",...],"lane":0}]}`;
 }
 
 function parsePlan(text: string): StudyPlan {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('no JSON in response');
-  const parsed = JSON.parse(match[0]) as StudyPlan;
+  const parsed = JSON.parse(match[0]) as StudyPlan & { steps: Array<PlannedStep & { lane?: number }> };
   if (!Array.isArray(parsed.order) || !Array.isArray(parsed.steps)) throw new Error('bad plan shape');
+  // Lift per-step lane hints into a lanes map if present.
+  const lanes: Record<string, number> = {};
+  let hasLanes = false;
+  for (const step of parsed.steps) {
+    if (typeof step.lane === 'number') { lanes[step.nodeId] = step.lane; hasLanes = true; }
+  }
+  if (hasLanes) parsed.lanes = lanes;
   return parsed;
 }
 

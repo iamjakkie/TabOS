@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { StudyPathDetail } from '../shared/study';
 
 const TILE_W = 210;
-const TILE_H = 104;
+const TILE_H = 120;
 
 type Node = StudyPathDetail['nodes'][number];
 
@@ -121,10 +121,15 @@ export function StudyGraphCanvas({ detail, onMoveNode, onAddEdge, onRemoveEdge, 
                 setDrag({ nodeId: node.id, x: pos.x, y: pos.y });
               }}
             >
+              {(() => { const label = node.titleOverride ?? resource.title; return (<>
               <div className="study-tile-head">
                 <span className={`study-type-badge ${resource.resourceType}`}>{resource.resourceType}</span>
-                <strong title={node.titleOverride ?? resource.title}>{node.titleOverride ?? resource.title}</strong>
               </div>
+              <strong
+                className={`study-tile-title ${label.length > 64 ? 'xs' : label.length > 38 ? 's' : ''}`}
+                title={label}
+              >{label}</strong>
+              </>); })()}
               <div className="study-progress-bar"><span style={{ width: `${Math.round(progress.fraction * 100)}%` }} /></div>
               <small className="study-node-meta">
                 {progress.totalUnits != null

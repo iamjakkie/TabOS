@@ -176,20 +176,50 @@ describe('StudyRepository', () => {
     repo.close();
   });
 
-  it('planWithAI produces a linear foundational-first plan without an API key', async () => {
-    const prev = process.env.ANTHROPIC_API_KEY;
+  it('planWithAI chains same-topic tiles foundational-first without an API key', async () => {
+    const prevA = process.env.ANTHROPIC_API_KEY;
+    const prevO = process.env.OPENROUTER_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const repo = await fresh();
     const p = repo.createPath({ title: 'Auto plan' });
-    const article = repo.addNode({ pathId: p.id, resource: { resourceType: 'article', title: 'Blog' } });
-    const book = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Textbook' } });
+    const article = repo.addNode({ pathId: p.id, resource: { resourceType: 'article', title: 'Kalman Filter Blog' } });
+    const book = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Kalman Filter Textbook' } });
     const detail = await repo.planWithAI(p.id);
-    // Book (foundational) should come before the article and be its prerequisite.
+    // Same keyword "kalman/filter" => one track; book (foundational) before article.
     expect(detail?.nodes[0].node.id).toBe(book.id);
     expect(detail?.edges).toHaveLength(1);
     expect(detail?.edges[0]).toMatchObject({ sourceNodeId: book.id, targetNodeId: article.id });
     repo.close();
-    if (prev) process.env.ANTHROPIC_API_KEY = prev;
+    if (prevA) process.env.ANTHROPIC_API_KEY = prevA;
+    if (prevO) process.env.OPENROUTER_API_KEY = prevO;
+  });
+
+  it('planWithAI builds parallel tracks that converge on a checkpoint', async () => {
+    const prevA = process.env.ANTHROPIC_API_KEY;
+    const prevO = process.env.OPENROUTER_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    const repo = await fresh();
+    const p = repo.createPath({ title: 'Parallel plan' });
+    const rustBook = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Rust Programming Language' } });
+    const rustVid = repo.addNode({ pathId: p.id, resource: { resourceType: 'video', title: 'Rust Async Deep Dive' } });
+    const linalgBook = repo.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Linear Algebra Done Right' } });
+    const project = repo.addNode({ pathId: p.id, resource: { resourceType: 'checkpoint', title: 'Capstone Project' } });
+    const detail = await repo.planWithAI(p.id);
+
+    // Two parallel tracks (rust, linear-algebra) placed on different rows.
+    const rustBookY = detail!.nodes.find((n) => n.node.id === rustBook.id)!.node.canvasY!;
+    const linalgY = detail!.nodes.find((n) => n.node.id === linalgBook.id)!.node.canvasY!;
+    expect(rustBookY).not.toBe(linalgY);
+    // rust track chains internally: book -> video.
+    expect(detail?.edges.some((e) => e.sourceNodeId === rustBook.id && e.targetNodeId === rustVid.id)).toBe(true);
+    // checkpoint converges (fan-in) from both track tails.
+    const intoProject = detail!.edges.filter((e) => e.targetNodeId === project.id);
+    expect(intoProject.length).toBeGreaterThanOrEqual(2);
+    repo.close();
+    if (prevA) process.env.ANTHROPIC_API_KEY = prevA;
+    if (prevO) process.env.OPENROUTER_API_KEY = prevO;
   });
 
   it('exports a portable snapshot including every canonical table', async () => {
