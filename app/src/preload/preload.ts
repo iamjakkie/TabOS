@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { BrowserCommand, BrowserLayout, BrowserSnapshot, TabOSBridge } from '../shared/browser';
 import type {
   AddEdgeInput, AddNodeInput, CreatePathInput, CreateResourceInput, LogSessionInput, RecordProgressInput,
-  SetPlanInput, StudyBridge, StudyExport, StudyNodeProgress, StudyPath, StudyPathDetail,
+  SetPlanInput, StudyBridge, StudyExport, StudyImportResult, StudyNodeProgress, StudyPath, StudyPathDetail,
   StudyPathEdge, StudyPathNode, StudyPathStats, StudySession, UpdateNodePositionInput,
 } from '../shared/study';
 
@@ -38,7 +38,9 @@ const studyBridge: StudyBridge = {
   setPlan: (input: SetPlanInput) => ipcRenderer.invoke('study:set-plan', input) as Promise<StudyPathDetail | null>,
   planWithAI: (pathId: string) => ipcRenderer.invoke('study:plan-ai', pathId) as Promise<StudyPathDetail | null>,
   tidyLayout: (pathId: string) => ipcRenderer.invoke('study:tidy', pathId) as Promise<StudyPathDetail | null>,
+  archivePath: (pathId: string) => ipcRenderer.invoke('study:archive-path', pathId) as Promise<void>,
   exportAll: () => ipcRenderer.invoke('study:export') as Promise<StudyExport>,
+  importAll: (data: StudyExport) => ipcRenderer.invoke('study:import', data) as Promise<StudyImportResult>,
 };
 
 contextBridge.exposeInMainWorld('study', studyBridge);

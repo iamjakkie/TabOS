@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { app, BaseWindow, ipcMain, Menu, session, WebContentsView } from 'electron';
 import type { BrowserCommand, BrowserLayout } from '../shared/browser';
-import type { AddEdgeInput, AddNodeInput, CreatePathInput, CreateResourceInput, LogSessionInput, RecordProgressInput, SetPlanInput, UpdateNodePositionInput } from '../shared/study';
+import type { AddEdgeInput, AddNodeInput, CreatePathInput, CreateResourceInput, LogSessionInput, RecordProgressInput, SetPlanInput, StudyExport, UpdateNodePositionInput } from '../shared/study';
 import { BrowserManager } from './browser-manager';
 import { SnapshotRepository } from './snapshot-repository';
 import { StudyRepository } from './study-repository';
@@ -128,7 +128,7 @@ async function createWindow(): Promise<void> {
     'study:list-paths', 'study:get-detail', 'study:create-path',
     'study:add-node', 'study:add-resources-bulk', 'study:record-progress', 'study:log-session',
     'study:update-node-position', 'study:add-edge', 'study:remove-edge', 'study:set-plan',
-    'study:plan-ai', 'study:tidy', 'study:export',
+    'study:plan-ai', 'study:tidy', 'study:archive-path', 'study:export', 'study:import',
   ]) ipcMain.removeHandler(channel);
 
   ipcMain.handle('study:list-paths', () => studyRepository?.listPaths() ?? []);
@@ -144,7 +144,9 @@ async function createWindow(): Promise<void> {
   ipcMain.handle('study:set-plan', (_event, input: SetPlanInput) => studyRepository?.setPlan(input) ?? null);
   ipcMain.handle('study:plan-ai', (_event, pathId: string) => studyRepository?.planWithAI(pathId) ?? null);
   ipcMain.handle('study:tidy', (_event, pathId: string) => studyRepository?.tidyLayout(pathId) ?? null);
+  ipcMain.handle('study:archive-path', (_event, pathId: string) => studyRepository?.archivePath(pathId));
   ipcMain.handle('study:export', () => studyRepository?.exportAll());
+  ipcMain.handle('study:import', (_event, data: StudyExport) => studyRepository?.importAll(data));
 
   const rendererPath = path.join(__dirname, '../../renderer/index.html');
   await shellView.webContents.loadFile(rendererPath);

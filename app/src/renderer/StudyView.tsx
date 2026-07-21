@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  StudyDeliverableType, StudyPath, StudyPathDetail, StudyPathStats,
+  StudyDeliverableType, StudyExport, StudyPath, StudyPathDetail, StudyPathStats,
   StudyResourceType, StudyUnitKind,
 } from '../shared/study';
 import { StudyGraphCanvas } from './StudyGraphCanvas';
@@ -25,6 +25,8 @@ export function StudyView() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StudyPathDetail | null>(null);
   const [creating, setCreating] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
 
   const refreshPaths = useCallback(async () => {
     const listed = await window.study.listPaths();
@@ -60,6 +62,26 @@ export function StudyView() {
     URL.revokeObjectURL(url);
   }
 
+  async function importStudy(file: File) {
+    try {
+      const data = JSON.parse(await file.text()) as StudyExport;
+      if (!Array.isArray(data.paths) || typeof data.schemaVersion !== 'number') {
+        throw new Error('not a TabOS study export');
+      }
+      const result = await window.study.importAll(data);
+      await refreshPaths();
+      setNotice(`Imported ${result.paths} path${result.paths === 1 ? '' : 's'}, ${result.nodes} resource${result.nodes === 1 ? '' : 's'}.`);
+    } catch (error) {
+      setNotice(`Import failed: ${error instanceof Error ? error.message : 'invalid file'}`);
+    }
+  }
+
+  async function archivePath(pathId: string, title: string) {
+    if (!window.confirm(`Archive “${title}”? It leaves your active list but stays in exports and can be recovered.`)) return;
+    await window.study.archivePath(pathId);
+    await refreshPaths();
+  }
+
   if (selectedId && detail) {
     return (
       <StudyPathView
@@ -75,10 +97,15 @@ export function StudyView() {
       <div className="study-toolbar">
         <h2>Learning paths</h2>
         <div className="study-toolbar-actions">
+          <button onClick={() => importRef.current?.click()} className="ghost">Import JSON</button>
           <button onClick={() => void exportStudy()} className="ghost">Export JSON</button>
           <button onClick={() => setCreating((v) => !v)} className="primary">＋ New path</button>
+          <input ref={importRef} type="file" accept=".json,application/json" hidden
+            onChange={(event) => { const file = event.target.files?.[0]; if (file) void importStudy(file); event.target.value = ''; }} />
         </div>
       </div>
+
+      {notice && <p className="study-notice" onClick={() => setNotice(null)}>{notice}</p>}
 
       {creating && <NewPathForm onCancel={() => setCreating(false)} onCreate={createPath} />}
 
@@ -87,13 +114,17 @@ export function StudyView() {
       ) : (
         <div className="study-path-grid">
           {paths.map(({ path, stats }) => (
-            <button key={path.id} className="study-path-card" onClick={() => setSelectedId(path.id)}>
+            <div key={path.id} className="study-path-card" role="button" tabIndex={0}
+              onClick={() => setSelectedId(path.id)}
+              onKeyDown={(event) => { if (event.key === 'Enter') setSelectedId(path.id); }}>
+              <button className="study-path-archive" title="Archive path"
+                onClick={(event) => { event.stopPropagation(); void archivePath(path.id, path.title); }}>⌫</button>
               <strong>{path.title}</strong>
               <div className="study-progress-bar"><span style={{ width: `${Math.round(stats.overallFraction * 100)}%` }} /></div>
               <small>
                 {stats.completedNodes}/{stats.totalNodes} done · {formatDuration(stats.totalTimeSeconds)} logged · {stats.sessionCount} sessions
               </small>
-            </button>
+            </div>
           ))}
         </div>
       )}

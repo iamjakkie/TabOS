@@ -176,10 +176,14 @@ kbd { color: var(--faint); font-size: 10px; border: 1px solid var(--border); bor
 .study-view button.ghost { background: transparent; color: var(--muted); }
 
 .study-empty { color: var(--muted); font-size: 13px; line-height: 1.6; padding: 40px 0; text-align: center; }
+.study-notice { margin: 0 0 14px; padding: 9px 12px; border: 1px solid rgba(113,112,255,.3); border-radius: 8px; background: rgba(113,112,255,.08); color: var(--text); font-size: 12px; cursor: pointer; }
 
 .study-path-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.study-path-card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; text-align: left; border: 1px solid var(--border); border-radius: 11px; background: rgba(255,255,255,.018); cursor: pointer; }
+.study-path-card { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; text-align: left; border: 1px solid var(--border); border-radius: 11px; background: rgba(255,255,255,.018); cursor: pointer; }
 .study-path-card:hover { border-color: rgba(113,112,255,.35); background: rgba(113,112,255,.05); }
+.study-path-archive { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,.03); color: var(--muted); font-size: 12px; line-height: 1; opacity: 0; cursor: pointer; transition: opacity .12s ease, color .12s ease, border-color .12s ease; }
+.study-path-card:hover .study-path-archive { opacity: 1; }
+.study-path-archive:hover { color: #ff8a8a; border-color: rgba(255,138,138,.4); }
 .study-path-card strong { font-size: 14px; font-weight: 600; }
 .study-path-card small { color: var(--muted); font-size: 10.5px; }
 

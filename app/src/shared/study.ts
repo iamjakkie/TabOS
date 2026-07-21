@@ -225,6 +225,16 @@ export interface LogSessionInput {
   } | null;
 }
 
+export interface StudyImportResult {
+  paths: number;
+  resources: number;
+  nodes: number;
+  edges: number;
+  progressEvents: number;
+  sessions: number;
+  deliverables: number;
+}
+
 export interface StudyExport {
   schemaVersion: number;
   exportedAt: number;
@@ -251,7 +261,9 @@ export interface StudyBridge {
   setPlan(input: SetPlanInput): Promise<StudyPathDetail | null>;
   planWithAI(pathId: string): Promise<StudyPathDetail | null>;
   tidyLayout(pathId: string): Promise<StudyPathDetail | null>;
+  archivePath(pathId: string): Promise<void>;
   exportAll(): Promise<StudyExport>;
+  importAll(data: StudyExport): Promise<StudyImportResult>;
 }
 
 declare global {

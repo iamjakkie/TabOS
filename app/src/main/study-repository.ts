@@ -364,6 +364,66 @@ export class StudyRepository {
     return this.setPlan(tidyLayout(detail));
   }
 
+  archivePath(pathId: string): void {
+    this.run('UPDATE study_paths SET archived_at = ?, updated_at = ? WHERE id = ?', [Date.now(), Date.now(), pathId]);
+    this.flush();
+  }
+
+  // Import a portable export. Idempotent by primary key: rows that already exist
+  // are left untouched (INSERT OR IGNORE) so re-importing the same file is safe
+  // and never duplicates. Canonical data only; derived stats are recomputed.
+  importAll(data: StudyExport): { paths: number; resources: number; nodes: number; edges: number; progressEvents: number; sessions: number; deliverables: number } {
+    const counts = { paths: 0, resources: 0, nodes: 0, edges: 0, progressEvents: 0, sessions: 0, deliverables: 0 };
+    const insert = (sql: string, params: unknown[], bucket: keyof typeof counts) => {
+      this.run(sql, params);
+      const changed = this.first<{ n: number }>('SELECT changes() AS n')?.n ?? 0;
+      if (changed > 0) counts[bucket] += 1;
+    };
+
+    for (const p of data.paths) {
+      insert(`INSERT OR IGNORE INTO study_paths(id, title, description, status, created_at, updated_at, archived_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [p.id, p.title, p.description, p.status, p.createdAt, p.updatedAt, p.archivedAt], 'paths');
+    }
+    for (const r of data.resources) {
+      insert(`INSERT OR IGNORE INTO study_resources(id, resource_type, title, source_url, local_ref, author_or_provider,
+                total_units, unit_kind, metadata, created_at, updated_at, archived_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [r.id, r.resourceType, r.title, r.sourceUrl, r.localRef, r.authorOrProvider, r.totalUnits, r.unitKind,
+         r.metadata ? JSON.stringify(r.metadata) : null, r.createdAt, r.updatedAt, r.archivedAt], 'resources');
+    }
+    for (const n of data.nodes) {
+      insert(`INSERT OR IGNORE INTO study_path_nodes(id, path_id, resource_id, parent_node_id, position, title_override,
+                status, target_units, notes, canvas_x, canvas_y, created_at, updated_at, archived_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [n.id, n.pathId, n.resourceId, n.parentNodeId, n.position, n.titleOverride, n.status, n.targetUnits,
+         n.notes, n.canvasX, n.canvasY, n.createdAt, n.updatedAt, n.archivedAt], 'nodes');
+    }
+    for (const e of data.edges) {
+      insert(`INSERT OR IGNORE INTO study_path_edges(id, path_id, source_node_id, target_node_id, kind, created_at, archived_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [e.id, e.pathId, e.sourceNodeId, e.targetNodeId, e.kind, e.createdAt, e.archivedAt], 'edges');
+    }
+    for (const ev of data.progressEvents) {
+      insert(`INSERT OR IGNORE INTO study_progress_events(id, node_id, units_delta, total_units_snapshot, completion_state, note, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [ev.id, ev.nodeId, ev.unitsDelta, ev.totalUnitsSnapshot, ev.completionState, ev.note, ev.createdAt], 'progressEvents');
+    }
+    for (const s of data.sessions) {
+      insert(`INSERT OR IGNORE INTO study_sessions(id, path_id, node_id, resource_id, started_at, ended_at, duration_seconds, note, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [s.id, s.pathId, s.nodeId, s.resourceId, s.startedAt, s.endedAt, s.durationSeconds, s.note, s.createdAt], 'sessions');
+    }
+    for (const d of data.deliverables) {
+      insert(`INSERT OR IGNORE INTO study_deliverables(id, session_id, node_id, deliverable_type, content, created_at)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        [d.id, d.sessionId, d.nodeId, d.deliverableType, d.content, d.createdAt], 'deliverables');
+    }
+
+    this.flush();
+    return counts;
+  }
+
   exportAll(): StudyExport {
     return {
       schemaVersion: STUDY_SCHEMA_VERSION,

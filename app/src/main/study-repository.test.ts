@@ -260,4 +260,49 @@ describe('StudyRepository', () => {
     expect(exported.exportedAt).toBeGreaterThan(0);
     repo.close();
   });
+
+  it('round-trips a full export through importAll into a fresh repository', async () => {
+    const source = await fresh();
+    const p = source.createPath({ title: 'Portable path', description: 'carry me' });
+    const book = source.addNode({ pathId: p.id, resource: { resourceType: 'book', title: 'Foundations', totalUnits: 100, unitKind: 'pages' } });
+    const video = source.addNode({ pathId: p.id, resource: { resourceType: 'video', title: 'Applied', totalUnits: 30, unitKind: 'minutes' } });
+    source.addEdge({ pathId: p.id, sourceNodeId: book.id, targetNodeId: video.id });
+    source.recordProgress({ nodeId: book.id, unitsDelta: 40 });
+    source.logSession({ pathId: p.id, nodeId: book.id, durationSeconds: 900, deliverable: { deliverableType: 'takeaway', content: 'chapter 1' } });
+    const exported = source.exportAll();
+    source.close();
+
+    const target = await fresh();
+    const result = target.importAll(exported);
+    expect(result).toMatchObject({ paths: 1, resources: 2, nodes: 2, edges: 1 });
+
+    const detail = target.getPathDetail(p.id);
+    expect(detail?.path.title).toBe('Portable path');
+    expect(detail?.nodes).toHaveLength(2);
+    expect(detail?.edges).toHaveLength(1);
+    expect(detail?.nodes.find((n) => n.node.id === book.id)?.progress.unitsCompleted).toBe(40);
+    expect(detail?.stats.totalTimeSeconds).toBe(900);
+
+    // Importing the same export again is idempotent (no duplicate rows).
+    target.importAll(exported);
+    expect(target.getPathDetail(p.id)?.nodes).toHaveLength(2);
+    expect(target.listPaths()).toHaveLength(1);
+    target.close();
+  });
+
+  it('archives a path so it drops out of listings but survives in export', async () => {
+    const repo = await fresh();
+    const keep = repo.createPath({ title: 'Keep' });
+    const drop = repo.createPath({ title: 'Drop' });
+    repo.addNode({ pathId: drop.id, resource: { resourceType: 'book', title: 'Doomed' } });
+
+    repo.archivePath(drop.id);
+    const listed = repo.listPaths();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].path.id).toBe(keep.id);
+    // Archived path is tombstoned, not deleted: still retrievable and exported.
+    expect(repo.getPathDetail(drop.id)?.path.archivedAt).not.toBeNull();
+    expect(repo.exportAll().paths).toHaveLength(2);
+    repo.close();
+  });
 });
