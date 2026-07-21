@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { BrowserCommand, BrowserLayout, BrowserSnapshot, TabOSBridge } from '../shared/browser';
+import type { BrowserCommand, BrowserLayout, BrowserSnapshot, TabOSBridge, TabUsage } from '../shared/browser';
 import type {
   AddEdgeInput, AddNodeInput, CreatePathInput, CreateResourceInput, LogSessionInput, RecordProgressInput,
   SetPlanInput, StudyBridge, StudyExport, StudyImportResult, StudyNodeProgress, StudyPath, StudyPathDetail,
@@ -19,6 +19,11 @@ const bridge: TabOSBridge = {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: BrowserSnapshot) => listener(snapshot);
     ipcRenderer.on('browser:snapshot', handler);
     return () => ipcRenderer.removeListener('browser:snapshot', handler);
+  },
+  onUsage: (listener: (usage: TabUsage[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, usage: TabUsage[]) => listener(usage);
+    ipcRenderer.on('browser:usage', handler);
+    return () => ipcRenderer.removeListener('browser:usage', handler);
   },
 };
 

@@ -14,8 +14,9 @@ let shellView: WebContentsView | null = null;
 let browserManager: BrowserManager | null = null;
 let repository: SnapshotRepository | null = null;
 let studyRepository: StudyRepository | null = null;
+let usageTimer: ReturnType<typeof setInterval> | null = null;
 
-let browserLayout: BrowserLayout = { topInset: 52, brainHeight: 0, contentHidden: false };
+let browserLayout: BrowserLayout = { topInset: 52, brainHeight: 0, contentHidden: false, leftInset: 0 };
 
 function updateLayout(): void {
   if (!mainWindow || !shellView || !browserManager) return;
@@ -27,10 +28,11 @@ function updateLayout(): void {
     browserManager.setBounds({ x: 0, y: browserLayout.topInset, width: 0, height: 0 });
     return;
   }
+  const left = browserLayout.leftInset ?? 0;
   browserManager.setBounds({
-    x: 0,
+    x: left,
     y: browserLayout.topInset,
-    width,
+    width: Math.max(0, width - left),
     height: Math.max(0, height - browserLayout.topInset - browserLayout.brainHeight),
   });
 }
@@ -72,6 +74,22 @@ async function createWindow(): Promise<void> {
       shellView?.webContents.send('browser:snapshot', snapshot);
     }
   });
+
+  // Stream live per-tab resource usage (CPU%, renderer memory) to the sidebar.
+  // Only tabs with a live renderer produce metrics; cold tabs are omitted.
+  if (usageTimer) clearInterval(usageTimer);
+  usageTimer = setInterval(() => {
+    if (!browserManager || !shellView || shellView.webContents.isDestroyed()) return;
+    const pidToTab = browserManager.getLiveProcessMap();
+    if (pidToTab.size === 0) { shellView.webContents.send('browser:usage', []); return; }
+    const usage = app.getAppMetrics().flatMap((metric) => {
+      const tabId = pidToTab.get(metric.pid);
+      if (!tabId) return [];
+      const memoryMB = metric.memory ? Math.round(metric.memory.workingSetSize / 1024) : 0;
+      return [{ tabId, cpu: Math.round((metric.cpu?.percentCPUUsage ?? 0) * 10) / 10, memoryMB }];
+    });
+    shellView.webContents.send('browser:usage', usage);
+  }, 1500);
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
@@ -120,6 +138,7 @@ async function createWindow(): Promise<void> {
       topInset: Math.max(44, Math.min(120, Math.round(layout.topInset))),
       brainHeight: Math.max(0, Math.round(layout.brainHeight)),
       contentHidden: layout.contentHidden === true,
+      leftInset: Math.max(0, Math.min(600, Math.round(layout.leftInset ?? 0))),
     };
     updateLayout();
   });
@@ -155,6 +174,7 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('resize', updateLayout);
   mainWindow.on('closed', () => {
+    if (usageTimer) { clearInterval(usageTimer); usageTimer = null; }
     browserManager?.destroy();
     browserManager = null;
     shellView = null;
@@ -170,6 +190,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  if (usageTimer) { clearInterval(usageTimer); usageTimer = null; }
   browserManager?.destroy();
   repository?.close();
   repository = null;

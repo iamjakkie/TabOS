@@ -32,6 +32,16 @@ export interface BrowserLayout {
   topInset: number;
   brainHeight: number;
   contentHidden?: boolean;
+  leftInset?: number;
+}
+
+// Live resource usage for tabs backed by a renderer process. Keyed by tabId.
+// Cold tabs are absent (they consume no process). `cpu` is percent (0..100+),
+// `memoryMB` is the renderer's working set when available.
+export interface TabUsage {
+  tabId: string;
+  cpu: number;
+  memoryMB: number;
 }
 
 export type BrowserCommand =
@@ -51,6 +61,7 @@ export interface TabOSBridge {
   setLayout(layout: BrowserLayout): Promise<void>;
   subscribe(listener: (snapshot: BrowserSnapshot) => void): () => void;
   onFocusAddress(listener: () => void): () => void;
+  onUsage(listener: (usage: TabUsage[]) => void): () => void;
 }
 
 declare global {

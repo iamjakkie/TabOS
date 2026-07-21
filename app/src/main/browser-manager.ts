@@ -46,6 +46,21 @@ export class BrowserManager {
     return { tabs: this.tabs, activeTabId: this.activeTabId, path: this.path };
   }
 
+  // Map of live renderer OS process id -> tabId, for usage sampling. Only tabs
+  // with an active WebContentsView appear here (cold tabs have no process).
+  getLiveProcessMap(): Map<number, string> {
+    const map = new Map<number, string>();
+    for (const [tabId, managed] of this.views) {
+      try {
+        const pid = managed.view.webContents.getOSProcessId();
+        if (pid) map.set(pid, tabId);
+      } catch {
+        // webContents may be gone mid-sample; skip.
+      }
+    }
+    return map;
+  }
+
   setBounds(bounds: Rectangle): void {
     this.contentBounds = bounds;
     const active = this.activeTabId ? this.views.get(this.activeTabId) : undefined;

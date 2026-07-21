@@ -1,15 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { BrowserSnapshot, BrowserTab } from '../shared/browser';
+import type { BrowserSnapshot, BrowserTab, TabUsage } from '../shared/browser';
 import { createHoverWakeController } from './hover-wake';
 import { buildPathRows } from '../main/navigation-path';
 import { KnowledgeGraphView } from './KnowledgeGraphView';
 import { StudyView } from './StudyView';
 import { QuickAddToStudy } from './QuickAddToStudy';
+import { Sidebar } from './Sidebar';
 import './styles.css';
 
 const EMPTY: BrowserSnapshot = { tabs: [], activeTabId: null, path: [] };
 const BRAIN_HEIGHT = 330;
+const SIDEBAR_WIDTH = 260;
 
 function App() {
   const [snapshot, setSnapshot] = useState<BrowserSnapshot>(EMPTY);
@@ -18,6 +20,8 @@ function App() {
   const [brainMode, setBrainMode] = useState<'ask' | 'path' | 'groups' | 'activity'>('ask');
   const [studyOpen, setStudyOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [usage, setUsage] = useState<Map<string, TabUsage>>(new Map());
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const tabStripRef = useRef<HTMLDivElement>(null);
@@ -42,7 +46,17 @@ function App() {
       addressRef.current?.focus();
       addressRef.current?.select();
     });
-    return () => { unsubscribe(); unsubscribeFocus(); hoverWake.clear(); };
+    const unsubscribeUsage = window.tabos.onUsage((list) => {
+      setUsage(new Map(list.map((entry) => [entry.tabId, entry])));
+    });
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        setSidebarOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => { unsubscribe(); unsubscribeFocus(); unsubscribeUsage(); window.removeEventListener('keydown', onKey); hoverWake.clear(); };
   }, [hoverWake]);
 
   useEffect(() => {
@@ -54,8 +68,9 @@ function App() {
       topInset: 52,
       brainHeight: brainOpen ? BRAIN_HEIGHT : 0,
       contentHidden: studyOpen || quickAddOpen,
+      leftInset: sidebarOpen ? SIDEBAR_WIDTH : 0,
     });
-  }, [brainOpen, studyOpen, quickAddOpen]);
+  }, [brainOpen, studyOpen, quickAddOpen, sidebarOpen]);
 
 
   function reorderTabs(targetId: string) {
@@ -69,7 +84,7 @@ function App() {
   }
 
   return (
-    <main className={`app-shell ${brainOpen ? 'brain-open' : ''}`}>
+    <main className={`app-shell ${brainOpen ? 'brain-open' : ''} ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <header className="browser-chrome">
         <div
           ref={tabStripRef}
@@ -96,6 +111,7 @@ function App() {
         </div>
         <button className="new-tab-button" onClick={() => command({ type: 'new-tab' })} title="New tab (⌘/Ctrl+T)">＋</button>
         <div className="chrome-actions">
+          <button className={sidebarOpen ? 'toggle-active' : ''} onClick={() => setSidebarOpen((open) => !open)} title="Toggle tab list (⌘/Ctrl+B)">☰</button>
           <button onClick={() => active && command({ type: 'back', tabId: active.id })} disabled={!active?.canGoBack}>←</button>
           <button onClick={() => active && command({ type: 'forward', tabId: active.id })} disabled={!active?.canGoForward}>→</button>
           <button onClick={() => active && command({ type: active.isLoading ? 'stop' : 'reload', tabId: active.id })}>{active?.isLoading ? '×' : '↻'}</button>
@@ -121,6 +137,15 @@ function App() {
 
 
       <div className="browser-underlay" />
+
+      {sidebarOpen && (
+        <Sidebar
+          snapshot={snapshot}
+          usage={usage}
+          onActivate={(tabId) => command({ type: 'activate-tab', tabId })}
+          onClose={(tabId) => command({ type: 'close-tab', tabId })}
+        />
+      )}
 
       {quickAddOpen && (
         <div className="quick-add-scrim">
