@@ -167,7 +167,10 @@ kbd { color: var(--faint); font-size: 10px; border: 1px solid var(--border); bor
 /* ---- Study Mode ---- */
 .study-overlay { position: fixed; inset: 52px 0 0; z-index: 45; background: #0a0b0d; overflow-y: auto; animation: reveal .18s ease-out; }
 
-.sidebar { position: fixed; left: 0; top: 52px; bottom: 0; width: 260px; z-index: 35; display: flex; flex-direction: column; background: #101114; border-right: 1px solid rgba(255,255,255,.1); animation: reveal .16s ease-out; }
+.sidebar { position: fixed; left: 0; top: 52px; bottom: 0; z-index: 35; display: flex; flex-direction: column; background: #101114; border-right: 1px solid rgba(255,255,255,.1); animation: reveal .16s ease-out; }
+.sidebar-resize { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; z-index: 2; cursor: col-resize; }
+.sidebar-resize:hover, body.resizing-sidebar .sidebar-resize { background: rgba(113,112,255,.35); }
+body.resizing-sidebar { cursor: col-resize; user-select: none; }
 .sidebar-head { padding: 12px 14px 8px; }
 .sidebar-count { display: flex; align-items: baseline; gap: 6px; }
 .sidebar-count strong { font-size: 18px; font-weight: 650; }

@@ -5,21 +5,42 @@ import { filterTabs, usageColor, visibleWindow } from './tab-list';
 const ROW_HEIGHT = 40;
 const OVERSCAN = 8;
 
+export const SIDEBAR_MIN_WIDTH = 200;
+export const SIDEBAR_MAX_WIDTH = 560;
+
 interface Props {
   snapshot: BrowserSnapshot;
   usage: Map<string, TabUsage>;
+  width: number;
+  onResize: (width: number) => void;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
 }
 
 // Left navigation rail for large tab counts: search + virtualized list with a
 // per-tab load indicator. Only the visible slice of rows is rendered, so it
-// stays smooth with thousands of tabs.
-export function Sidebar({ snapshot, usage, onActivate, onClose }: Props) {
+// stays smooth with thousands of tabs. A drag handle on the right edge resizes it.
+export function Sidebar({ snapshot, usage, width, onResize, onActivate, onClose }: Props) {
   const [query, setQuery] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(600);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  function startResize(event: React.PointerEvent) {
+    event.preventDefault();
+    const move = (e: PointerEvent) => {
+      const next = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, e.clientX));
+      onResize(next);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.classList.remove('resizing-sidebar');
+    };
+    document.body.classList.add('resizing-sidebar');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
 
   const filtered = useMemo(() => filterTabs(snapshot.tabs, query), [snapshot.tabs, query]);
   const liveCount = useMemo(
@@ -31,7 +52,8 @@ export function Sidebar({ snapshot, usage, onActivate, onClose }: Props) {
   const rows = filtered.slice(win.start, win.end);
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width }}>
+      <div className="sidebar-resize" onPointerDown={startResize} title="Drag to resize" />
       <div className="sidebar-head">
         <div className="sidebar-count">
           <strong>{snapshot.tabs.length.toLocaleString()}</strong>

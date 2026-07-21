@@ -6,12 +6,12 @@ import { buildPathRows } from '../main/navigation-path';
 import { KnowledgeGraphView } from './KnowledgeGraphView';
 import { StudyView } from './StudyView';
 import { QuickAddToStudy } from './QuickAddToStudy';
-import { Sidebar } from './Sidebar';
+import { Sidebar, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from './Sidebar';
 import './styles.css';
 
 const EMPTY: BrowserSnapshot = { tabs: [], activeTabId: null, path: [] };
 const BRAIN_HEIGHT = 330;
-const SIDEBAR_WIDTH = 260;
+const SIDEBAR_DEFAULT_WIDTH = 260;
 
 function App() {
   const [snapshot, setSnapshot] = useState<BrowserSnapshot>(EMPTY);
@@ -21,6 +21,10 @@ function App() {
   const [studyOpen, setStudyOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = Number(localStorage.getItem('tabos.sidebarWidth'));
+    return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : SIDEBAR_DEFAULT_WIDTH;
+  });
   const [usage, setUsage] = useState<Map<string, TabUsage>>(new Map());
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
@@ -68,9 +72,9 @@ function App() {
       topInset: 52,
       brainHeight: brainOpen ? BRAIN_HEIGHT : 0,
       contentHidden: studyOpen || quickAddOpen,
-      leftInset: sidebarOpen ? SIDEBAR_WIDTH : 0,
+      leftInset: sidebarOpen ? sidebarWidth : 0,
     });
-  }, [brainOpen, studyOpen, quickAddOpen, sidebarOpen]);
+  }, [brainOpen, studyOpen, quickAddOpen, sidebarOpen, sidebarWidth]);
 
 
   function reorderTabs(targetId: string) {
@@ -142,6 +146,8 @@ function App() {
         <Sidebar
           snapshot={snapshot}
           usage={usage}
+          width={sidebarWidth}
+          onResize={(w) => { setSidebarWidth(w); localStorage.setItem('tabos.sidebarWidth', String(w)); }}
           onActivate={(tabId) => command({ type: 'activate-tab', tabId })}
           onClose={(tabId) => command({ type: 'close-tab', tabId })}
         />
