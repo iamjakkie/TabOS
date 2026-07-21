@@ -52,10 +52,13 @@ export function StudyGraphCanvas({ detail, onMoveNode, onAddEdge, onRemoveEdge, 
         setTransform((t) => ({ ...t, scale: Math.max(0.4, Math.min(2.2, t.scale * factor)) }));
       }}
       onPointerDown={(event) => {
-        if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains('study-canvas-grid')) {
-          setSelectedNode(null);
-          setPanning({ x: event.clientX - transform.x, y: event.clientY - transform.y });
-        }
+        // Pan when the press does not land on an interactive element (a tile,
+        // its link handle, or an edge hit-area). The transformed world layer
+        // covers the whole canvas, so we can't rely on target === currentTarget.
+        const target = event.target as HTMLElement;
+        if (target.closest('.study-tile, .study-link-handle, .study-edge-hit')) return;
+        setSelectedNode(null);
+        setPanning({ x: event.clientX - transform.x, y: event.clientY - transform.y });
       }}
       onPointerMove={(event) => {
         if (panning) setTransform((t) => ({ ...t, x: event.clientX - panning.x, y: event.clientY - panning.y }));
