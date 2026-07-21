@@ -1,18 +1,55 @@
 # TabOS Development Log
 
-Last updated: 2026-07-18 (takeover session)
+Last updated: 2026-07-20 (study durability session)
 
-## 0. Takeover checkpoint — 2026-07-18
+## 0. Current state — 2026-07-20
 
-Project taken over and verified. Status at this checkpoint:
+Reconciliation note: earlier checkpoints in this file (sections 12–14) described a
+point where persistence was still failing under TDD. That is historical. The
+committed codebase is well past it. As of this update the following are all
+implemented, committed, and green:
 
-- `SnapshotRepository` (sql.js WASM) is implemented and passing its round-trip tests
-- persistence is integrated into `main.ts`: DB at `<userData>/tabos.db`, restore on launch, autosave listener, save on close/quit
-- `BrowserManager.initialize(snapshot?)` restores logical tabs (active hot, others cold)
-- Obsidian-like knowledge graph implemented: `knowledge-graph.ts` projection (canonical page nodes, typed navigated/opened-from edges, visit counts, active node) + `KnowledgeGraphView.tsx` (d3-force simulation, pan/zoom, node selection/inspector, search filter, edge-type toggles, double-click to open page)
-- graph view wired into Brain → Path mode replacing the linear list
-- missing graph CSS added (toolbar, stage, nodes, edges, inspector, legend, empty state)
-- verified: 30/30 tests, typecheck, production build, app launches, `tabos.db` written under user data (28 KB)
+- `SnapshotRepository` (sql.js WASM): browser tabs/order/active tab/navigation path
+  round-trip through `<userData>/tabos.db`; restore on launch, autosave on mutation,
+  save on close/quit. Integrated in `main.ts` and `browser-manager.ts`.
+- Knowledge graph: `knowledge-graph.ts` projection + `KnowledgeGraphView.tsx`
+  (d3-force, pan/zoom, inspector, filters); wired into Brain → Path.
+- Study Mode (schema v2): full canonical domain in `<userData>/tabos-study.db` —
+  paths, resources, path nodes, append-only progress events, sessions,
+  deliverables, lineage edges, schema migrations. `StudyRepository` with derived
+  progress/stats projections. `study-planner.ts` sequences tiles into parallel
+  difficulty-ordered tracks with an OpenRouter/Anthropic backend and a
+  deterministic keyword-clustering fallback. `StudyView.tsx` + `StudyGraphCanvas.tsx`
+  provide path list, path detail, canvas graph (drag, link, zoom), quick progress,
+  session logging, CSV/TXT import, and JSON export.
+- Verified this session: 53/53 tests pass, typecheck clean, production build clean.
+
+Latest git history (most recent first): planner orphan/linearity fixes, drag
+region fix, difficulty-driven planning, parallel tracks, OpenRouter support, Edit
+menu clipboard shortcuts, Study Mode graph/import/AI-plan, inline Study forms,
+full-screen Study overlay, Study data layer + browser snapshot persistence,
+standalone Electron browser with knowledge graph and SQLite persistence.
+
+## 0b. Study durability session — 2026-07-20
+
+Added the missing half of study portability plus non-destructive path removal.
+All TDD-first, no existing tests weakened.
+
+- `StudyRepository.importAll(export)`: imports a full portable export into any
+  repository. Idempotent by primary key (`INSERT OR IGNORE`), so re-importing the
+  same file never duplicates rows; returns per-table insert counts. Canonical data
+  only — derived progress/stats are recomputed on read.
+- `StudyRepository.archivePath(pathId)`: tombstones a path (`archived_at`) so it
+  leaves `listPaths()` but survives in `getPathDetail` and `exportAll` and can be
+  recovered.
+- Shared contract (`shared/study.ts`): added `StudyImportResult`, and
+  `archivePath` / `importAll` to `StudyBridge`.
+- IPC + preload: added `study:archive-path` and `study:import` channels/bridge.
+- UI (`StudyView.tsx`): "Import JSON" button (file picker + validation + result
+  notice) beside "Export JSON"; per-card archive control with confirm; transient
+  notice banner. CSS for `.study-notice` and `.study-path-archive`.
+- New tests: full export → `importAll` round-trip with idempotency, and archive
+  visibility/tombstone survival. Suite: 51 → 53 tests, all green.
 
 This file records the work completed in the current development effort, including architectural pivots, implementation details, verification, failures, and unresolved work. It is intentionally more historical than `context.md`.
 

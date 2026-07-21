@@ -1,19 +1,35 @@
 # TabOS Current Context
 
-Last updated: 2026-07-18 (takeover session)
+Last updated: 2026-07-20 (study durability session)
 
 This is the working handoff document for continuing TabOS development. For chronological history and implementation details, read `log.md`. For the long-form architecture, read `.hermes/plans/2026-07-16_002231-tabos-product-architecture-v2.md`.
 
-## 0. Status update — 2026-07-18
+## 0. Status update — 2026-07-20
 
-The persistence milestone (section 5/6 below) and the knowledge-graph visualization are now COMPLETE and verified:
+Persistence, the knowledge graph, and Study Mode are all COMPLETE and verified.
+Sections 4–6 below are historical (they describe a pre-persistence TDD state that
+no longer exists); keep them only for context.
 
-- 30/30 tests pass, typecheck passes, production build passes
-- `SnapshotRepository` (sql.js) round-trips tabs/order/active/path through `<userData>/tabos.db`
-- restore on launch, autosave on mutations, save on close/quit
-- Brain → Path renders an interactive force-directed knowledge graph (d3-force): canonical page nodes sized by visits, typed navigated/opened-from edges, pan/zoom, search filter, edge toggles, node inspector, double-click opens the page
+Verified this session: 53/53 tests pass, typecheck passes, production build passes.
 
-The next milestone is section 7 Milestone 2: safe import of the real `tabs` export (preview + batch + rollback), then the model gateway.
+Working and committed:
+
+- `SnapshotRepository` (sql.js) round-trips tabs/order/active/path through `<userData>/tabos.db`; restore on launch, autosave on mutation, save on close/quit.
+- Brain → Path renders an interactive force-directed knowledge graph (d3-force).
+- Study Mode (schema v2) in `<userData>/tabos-study.db`: paths, resources, path nodes, append-only progress events, sessions, deliverables, lineage edges, migrations. `StudyRepository` with derived progress/stats. `study-planner.ts` (OpenRouter/Anthropic + deterministic fallback) sequences tiles into parallel difficulty-ordered tracks. UI: path list, path detail, canvas graph, quick progress, session logging, CSV/TXT import, JSON export/import, path archive.
+
+Study durability session (2026-07-20) added:
+
+- `StudyRepository.importAll(export)` — idempotent (`INSERT OR IGNORE`) portable import; returns per-table counts.
+- `StudyRepository.archivePath(pathId)` — non-destructive tombstone; drops out of `listPaths` but survives in export.
+- Shared contract, IPC (`study:import`, `study:archive-path`), preload bridge, and `StudyView` UI (Import JSON button, per-card archive) wired through.
+
+### Suggested next milestones
+
+- Model gateway (context.md section 7 Milestone 4): one provider interface with OpenRouter / OpenAI-compatible / Ollama presets; secrets in OS credentials, not SQLite. The study planner already talks to OpenRouter/Anthropic and is a good extraction seed.
+- First complete AI workflow (Milestone 5): "Group open/imported tabs" end-to-end.
+- Safe real-tab import of the private `tabs` export (Milestone 2): preview + batch + rollback; import cold.
+- Study Mode next: streaks/what-next surfacing, per-node notes/deliverable browsing, resource dedup across paths.
 
 ## 1. Product vision
 
