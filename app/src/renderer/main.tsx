@@ -5,6 +5,7 @@ import { createHoverWakeController } from './hover-wake';
 import { buildPathRows } from '../main/navigation-path';
 import { KnowledgeGraphView } from './KnowledgeGraphView';
 import { StudyView } from './StudyView';
+import { QuickAddToStudy } from './QuickAddToStudy';
 import './styles.css';
 
 const EMPTY: BrowserSnapshot = { tabs: [], activeTabId: null, path: [] };
@@ -16,6 +17,7 @@ function App() {
   const [brainOpen, setBrainOpen] = useState(false);
   const [brainMode, setBrainMode] = useState<'ask' | 'path' | 'groups' | 'activity'>('ask');
   const [studyOpen, setStudyOpen] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const tabStripRef = useRef<HTMLDivElement>(null);
@@ -51,9 +53,9 @@ function App() {
     void window.tabos.setLayout({
       topInset: 52,
       brainHeight: brainOpen ? BRAIN_HEIGHT : 0,
-      contentHidden: studyOpen,
+      contentHidden: studyOpen || quickAddOpen,
     });
-  }, [brainOpen, studyOpen]);
+  }, [brainOpen, studyOpen, quickAddOpen]);
 
 
   function reorderTabs(targetId: string) {
@@ -105,6 +107,9 @@ function App() {
             <span>⌕</span>
             <input ref={addressRef} value={address} onFocus={(event) => event.currentTarget.select()} onClick={(event) => event.currentTarget.select()} onChange={(event) => setAddress(event.target.value)} placeholder="Search or enter address" />
           </form>
+          <button className={`brain-button ${quickAddOpen ? 'active' : ''}`} onClick={() => setQuickAddOpen((open) => !open)} disabled={!active} title="Add this page to a learning path">
+            <span>＋</span><span className="brain-label">Path</span>
+          </button>
           <button className={`brain-button ${studyOpen ? 'active' : ''}`} onClick={() => setStudyOpen((open) => !open)} title="Open Study Mode">
             <span>◆</span><span className="brain-label">Study</span>
           </button>
@@ -116,6 +121,12 @@ function App() {
 
 
       <div className="browser-underlay" />
+
+      {quickAddOpen && (
+        <div className="quick-add-scrim">
+          <QuickAddToStudy active={active} onClose={() => setQuickAddOpen(false)} />
+        </div>
+      )}
 
       {studyOpen && (
         <section className="study-overlay">
