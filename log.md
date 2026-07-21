@@ -51,6 +51,31 @@ All TDD-first, no existing tests weakened.
 - New tests: full export → `importAll` round-trip with idempotency, and archive
   visibility/tombstone survival. Suite: 51 → 53 tests, all green.
 
+## 0c. Navigation + quick-add + stress harness — 2026-07-21
+
+- Quick-add to study path from the browser (`QuickAddToStudy.tsx`, `detect-resource.ts`):
+  "+ Path" toolbar button opens a popover over the current tab (no mode switch),
+  guesses resource type from the URL, picks/creates a path, and can re-run the AI
+  arranger so the new tile lands in the graph. Collapses the native web view while
+  open (same pattern as the Study overlay).
+- Left tab sidebar (`Sidebar.tsx`, `tab-list.ts`): toggle in the toolbar and
+  Cmd/Ctrl+B. Count header, title/URL search (AND terms), and a virtualized list
+  (only the visible slice is in the DOM) so 1000+ tabs scroll smoothly. Per-tab
+  load dot: gray for cold/suspended, green->red by live CPU%.
+- Live usage stream: main process samples `app.getAppMetrics()` every 1.5s, maps
+  renderer OS pids -> tabIds via `getLiveProcessMap()`, and pushes `browser:usage`.
+  `BrowserLayout.leftInset` added so the web view sits beside the sidebar.
+- Note: the sidebar toggle was first placed as a floating button near the macOS
+  traffic lights and was unclickable because the window drag region swallowed the
+  click. Fixed by moving it into the `.chrome-actions` toolbar cluster.
+- Stress harness (`app/scripts/seed-stress.mjs`): parses the gitignored `tabs`
+  export (unwraps Great Suspender wrappers), seeds N cold tabs into `tabos.db`.
+  Verified 1000 real tabs: 5 renderer processes, ~1.15 GB total RSS, 997 cold tabs
+  at zero renderer cost; only the active tab spins up on launch.
+- Tests: pure helpers `filterTabs`/`usageColor`/`visibleWindow` and
+  `detectResourceType` unit-tested. Suite: 58 -> 68 tests, all green; typecheck and
+  build clean.
+
 This file records the work completed in the current development effort, including architectural pivots, implementation details, verification, failures, and unresolved work. It is intentionally more historical than `context.md`.
 
 ## 1. Starting point
