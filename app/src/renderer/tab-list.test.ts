@@ -5,7 +5,7 @@ import type { BrowserTab } from '../shared/browser';
 function tab(partial: Partial<BrowserTab>): BrowserTab {
   return {
     id: 'x', url: 'https://example.com', title: 'Example', runtimeState: 'cold',
-    isLoading: false, canGoBack: false, canGoForward: false, createdAt: 0, lastActiveAt: 0,
+    isLoading: false, canGoBack: false, canGoForward: false, pinned: false, createdAt: 0, lastActiveAt: 0,
     ...partial,
   };
 }

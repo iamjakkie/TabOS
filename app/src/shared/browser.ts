@@ -9,6 +9,7 @@ export interface BrowserTab {
   isLoading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  pinned: boolean;
   createdAt: number;
   lastActiveAt: number;
 }
@@ -53,6 +54,7 @@ export type BrowserCommand =
   | { type: 'forward'; tabId: string }
   | { type: 'reload'; tabId: string }
   | { type: 'stop'; tabId: string }
+  | { type: 'set-pinned'; tabId: string; pinned: boolean }
   | { type: 'reorder-tabs'; tabIds: string[] };
 
 export interface TabOSBridge {

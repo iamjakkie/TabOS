@@ -29,6 +29,7 @@ export function createTab(
     isLoading: false,
     canGoBack: false,
     canGoForward: false,
+    pinned: false,
     createdAt: now,
     lastActiveAt: now,
   };

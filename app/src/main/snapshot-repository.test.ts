@@ -9,8 +9,8 @@ const paths: string[] = [];
 const snapshot: BrowserSnapshot = {
   activeTabId: 'tab-b',
   tabs: [
-    { id: 'tab-a', url: 'https://one.example', title: 'One', runtimeState: 'cold', isLoading: false, canGoBack: false, canGoForward: false, createdAt: 1, lastActiveAt: 10 },
-    { id: 'tab-b', url: 'https://two.example', title: 'Two', runtimeState: 'hot', isLoading: false, canGoBack: true, canGoForward: false, createdAt: 2, lastActiveAt: 20 },
+    { id: 'tab-a', url: 'https://one.example', title: 'One', runtimeState: 'cold', isLoading: false, canGoBack: false, canGoForward: false, pinned: false, createdAt: 1, lastActiveAt: 10 },
+    { id: 'tab-b', url: 'https://two.example', title: 'Two', runtimeState: 'hot', isLoading: false, canGoBack: true, canGoForward: false, pinned: true, createdAt: 2, lastActiveAt: 20 },
   ],
   path: [
     { id: 'visit-a', tabId: 'tab-a', url: 'https://one.example', title: 'One', visitedAt: 10 },

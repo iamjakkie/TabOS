@@ -46,6 +46,7 @@ export class SnapshotRepository {
         isLoading: Boolean(row.is_loading),
         canGoBack: Boolean(row.can_go_back),
         canGoForward: Boolean(row.can_go_forward),
+        pinned: Boolean(row.pinned),
         createdAt: Number(row.created_at),
         lastActiveAt: Number(row.last_active_at),
       } satisfies BrowserTab)),
@@ -74,14 +75,14 @@ export class SnapshotRepository {
       const tabStatement = this.db.prepare(`
         INSERT INTO browser_tabs(
           id, position, url, title, favicon, runtime_state, is_loading,
-          can_go_back, can_go_forward, created_at, last_active_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          can_go_back, can_go_forward, pinned, created_at, last_active_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       snapshot.tabs.forEach((tab, position) => {
         tabStatement.run([
           tab.id, position, tab.url, tab.title, tab.favicon ?? null, tab.runtimeState,
           tab.isLoading ? 1 : 0, tab.canGoBack ? 1 : 0, tab.canGoForward ? 1 : 0,
-          tab.createdAt, tab.lastActiveAt,
+          tab.pinned ? 1 : 0, tab.createdAt, tab.lastActiveAt,
         ]);
       });
       tabStatement.free();
@@ -145,6 +146,17 @@ export class SnapshotRepository {
       );
       INSERT OR IGNORE INTO browser_schema_migrations(version, applied_at) VALUES (1, ${Date.now()});
     `);
+
+    // v2 (additive): pinned tabs are protected from LRU freezing.
+    if (!this.hasColumn('browser_tabs', 'pinned')) {
+      this.db.run('ALTER TABLE browser_tabs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+      this.db.run(`INSERT OR IGNORE INTO browser_schema_migrations(version, applied_at) VALUES (2, ${Date.now()})`);
+    }
+  }
+
+  private hasColumn(table: string, column: string): boolean {
+    const rows = this.all<{ name: string }>(`PRAGMA table_info(${table})`);
+    return rows.some((row) => row.name === column);
   }
 
   private flush(): void {

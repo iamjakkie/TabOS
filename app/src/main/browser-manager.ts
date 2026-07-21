@@ -117,6 +117,12 @@ export class BrowserManager {
       case 'stop':
         this.views.get(command.tabId)?.view.webContents.stop();
         break;
+      case 'set-pinned':
+        this.tabs = this.tabs.map((tab) => tab.id === command.tabId
+          ? { ...tab, pinned: command.pinned }
+          : tab);
+        this.emit();
+        break;
       case 'reorder-tabs': {
         const byId = new Map(this.tabs.map((tab) => [tab.id, tab]));
         const reordered = command.tabIds.flatMap((id) => {
@@ -323,10 +329,12 @@ export class BrowserManager {
   }
 
   private evictExcessViews(): void {
+    const pinned = new Set(this.tabs.filter((tab) => tab.pinned).map((tab) => tab.id));
     const toFreeze = chooseTabsToFreeze(
       [...this.views.entries()].map(([tabId, managed]) => ({ tabId, lastUsedAt: managed.lastUsedAt })),
       this.activeTabId,
       MAX_LIVE_RENDERERS,
+      pinned,
     );
 
     for (const tabId of toFreeze) {

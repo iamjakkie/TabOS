@@ -16,12 +16,13 @@ interface Props {
   onResize: (width: number) => void;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
+  onTogglePin: (tabId: string, pinned: boolean) => void;
 }
 
 // Left navigation rail for large tab counts: search + virtualized list with a
 // per-tab load indicator. Only the visible slice of rows is rendered, so it
 // stays smooth with thousands of tabs. A drag handle on the right edge resizes it.
-export function Sidebar({ snapshot, usage, width, onResize, onActivate, onClose }: Props) {
+export function Sidebar({ snapshot, usage, width, onResize, onActivate, onClose, onTogglePin }: Props) {
   const [query, setQuery] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(600);
@@ -43,7 +44,11 @@ export function Sidebar({ snapshot, usage, width, onResize, onActivate, onClose 
     window.addEventListener('pointerup', up);
   }
 
-  const filtered = useMemo(() => filterTabs(snapshot.tabs, query), [snapshot.tabs, query]);
+  const filtered = useMemo(() => {
+    const matched = filterTabs(snapshot.tabs, query);
+    // Pinned tabs float to the top, otherwise preserve tab order.
+    return [...matched].sort((a, b) => Number(b.pinned) - Number(a.pinned));
+  }, [snapshot.tabs, query]);
   const liveCount = useMemo(
     () => snapshot.tabs.filter((tab) => tab.runtimeState !== 'cold').length,
     [snapshot.tabs],
@@ -90,6 +95,7 @@ export function Sidebar({ snapshot, usage, width, onResize, onActivate, onClose 
                 usage={usage.get(tab.id)}
                 onActivate={() => onActivate(tab.id)}
                 onClose={() => onClose(tab.id)}
+                onTogglePin={() => onTogglePin(tab.id, !tab.pinned)}
               />
             ))}
           </div>
@@ -100,8 +106,9 @@ export function Sidebar({ snapshot, usage, width, onResize, onActivate, onClose 
   );
 }
 
-function SidebarRow({ tab, active, usage, onActivate, onClose }: {
-  tab: BrowserTab; active: boolean; usage: TabUsage | undefined; onActivate: () => void; onClose: () => void;
+function SidebarRow({ tab, active, usage, onActivate, onClose, onTogglePin }: {
+  tab: BrowserTab; active: boolean; usage: TabUsage | undefined;
+  onActivate: () => void; onClose: () => void; onTogglePin: () => void;
 }) {
   const color = usageColor(tab.runtimeState, usage);
   const icon = faviconSrc(tab.favicon, tab.url);
@@ -110,11 +117,16 @@ function SidebarRow({ tab, active, usage, onActivate, onClose }: {
     : `${tab.runtimeState} · ${usage ? `${usage.cpu}% CPU · ${usage.memoryMB} MB` : 'live'}`;
   return (
     <div
-      className={`sidebar-row ${active ? 'active' : ''} ${tab.runtimeState}`}
+      className={`sidebar-row ${active ? 'active' : ''} ${tab.runtimeState} ${tab.pinned ? 'pinned' : ''}`}
       style={{ height: ROW_HEIGHT }}
       onClick={onActivate}
       title={title}
     >
+      <button
+        className={`sidebar-pin ${tab.pinned ? 'on' : ''}`}
+        title={tab.pinned ? 'Unpin (allow freezing)' : 'Pin (never freeze)'}
+        onClick={(event) => { event.stopPropagation(); onTogglePin(); }}
+      >{tab.pinned ? '★' : '☆'}</button>
       <span className="sidebar-load" style={{ background: color }} />
       {icon ? <img src={icon} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} /> : <span className="sidebar-glyph">◦</span>}
       <span className="sidebar-row-title">{tab.title || tab.url}</span>

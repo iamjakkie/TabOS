@@ -185,6 +185,11 @@ body.resizing-sidebar { cursor: col-resize; user-select: none; }
 .sidebar-row { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; cursor: pointer; border-left: 2px solid transparent; }
 .sidebar-row:hover { background: rgba(255,255,255,.045); }
 .sidebar-row.active { background: rgba(113,112,255,.14); border-left-color: #7170ff; }
+.sidebar-pin { width: 16px; padding: 0; border: 0; background: transparent; color: #737780; opacity: 0; cursor: pointer; font-size: 12px; flex: none; }
+.sidebar-row:hover .sidebar-pin { opacity: 1; }
+.sidebar-pin.on { opacity: 1; color: #f0c65a; }
+.sidebar-pin:hover { color: #f0c65a; }
+.sidebar-row.pinned { background: rgba(240,198,90,.06); }
 .sidebar-load { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .sidebar-row.cold { opacity: .62; }
 .sidebar-row img { width: 15px; height: 15px; border-radius: 3px; flex: none; }

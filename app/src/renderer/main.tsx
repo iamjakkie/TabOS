@@ -151,6 +151,7 @@ function App() {
           onResize={(w) => { setSidebarWidth(w); localStorage.setItem('tabos.sidebarWidth', String(w)); }}
           onActivate={(tabId) => command({ type: 'activate-tab', tabId })}
           onClose={(tabId) => command({ type: 'close-tab', tabId })}
+          onTogglePin={(tabId, pinned) => command({ type: 'set-pinned', tabId, pinned })}
         />
       )}
 
