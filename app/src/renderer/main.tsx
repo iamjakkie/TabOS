@@ -7,6 +7,7 @@ import { KnowledgeGraphView } from './KnowledgeGraphView';
 import { StudyView } from './StudyView';
 import { QuickAddToStudy } from './QuickAddToStudy';
 import { Sidebar, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from './Sidebar';
+import { faviconSrc } from './favicon';
 import './styles.css';
 
 const EMPTY: BrowserSnapshot = { tabs: [], activeTabId: null, path: [] };
@@ -190,7 +191,9 @@ function TopTab({ tab, active, onActivate, onClose, onHoverStart, onHoverEnd, on
   return (
     <div className={`top-tab ${active ? 'active' : ''}`} draggable onDragStart={onDragStart} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} onClick={onActivate} onMouseEnter={onHoverStart} onMouseLeave={onHoverEnd}>
       <span className={`runtime-dot ${tab.runtimeState}`} />
-      {tab.favicon ? <img src={tab.favicon} /> : <span className="tab-glyph">◦</span>}
+      {(() => { const icon = faviconSrc(tab.favicon, tab.url); return icon
+        ? <img src={icon} onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
+        : <span className="tab-glyph">◦</span>; })()}
       <span className="top-tab-title">{tab.title}</span>
       {tab.isLoading && <span className="loading-ring" />}
       <button onClick={(event) => { event.stopPropagation(); onClose(); }}>×</button>

@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import type { BrowserSnapshot, BrowserTab, TabUsage } from '../shared/browser';
 import { filterTabs, usageColor, visibleWindow } from './tab-list';
+import { faviconSrc } from './favicon';
 
 const ROW_HEIGHT = 40;
 const OVERSCAN = 8;
@@ -103,6 +104,7 @@ function SidebarRow({ tab, active, usage, onActivate, onClose }: {
   tab: BrowserTab; active: boolean; usage: TabUsage | undefined; onActivate: () => void; onClose: () => void;
 }) {
   const color = usageColor(tab.runtimeState, usage);
+  const icon = faviconSrc(tab.favicon, tab.url);
   const title = tab.runtimeState === 'cold'
     ? 'Suspended — click to restore'
     : `${tab.runtimeState} · ${usage ? `${usage.cpu}% CPU · ${usage.memoryMB} MB` : 'live'}`;
@@ -114,7 +116,7 @@ function SidebarRow({ tab, active, usage, onActivate, onClose }: {
       title={title}
     >
       <span className="sidebar-load" style={{ background: color }} />
-      {tab.favicon ? <img src={tab.favicon} alt="" /> : <span className="sidebar-glyph">◦</span>}
+      {icon ? <img src={icon} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} /> : <span className="sidebar-glyph">◦</span>}
       <span className="sidebar-row-title">{tab.title || tab.url}</span>
       {tab.isLoading && <span className="sidebar-loading" />}
       <button className="sidebar-row-close" onClick={(event) => { event.stopPropagation(); onClose(); }}>×</button>
