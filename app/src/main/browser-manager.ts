@@ -1,6 +1,9 @@
 import {
   BaseWindow,
+  clipboard,
+  Menu,
   WebContentsView,
+  type MenuItemConstructorOptions,
   type Rectangle,
   type Session,
 } from 'electron';
@@ -19,10 +22,21 @@ interface ManagedView {
   lastUsedAt: number;
 }
 
+// Snapshot of a tab's renderer state captured just before its renderer is
+// frozen, so waking the tab restores the page exactly where the user left off
+// (back/forward stack + scroll) instead of a fresh reload.
+interface FrozenState {
+  entries: Electron.NavigationEntry[];
+  index: number;
+  scrollX: number;
+  scrollY: number;
+}
+
 export class BrowserManager {
   private tabs: BrowserTab[] = [];
   private activeTabId: string | null = null;
   private readonly views = new Map<string, ManagedView>();
+  private readonly frozenState = new Map<string, FrozenState>();
   private path: PathEvent[] = [];
   private readonly suppressPathForTab = new Set<string>();
   private readonly lastVisitByTab = new Map<string, string>();
@@ -147,18 +161,29 @@ export class BrowserManager {
     this.views.clear();
   }
 
-  private async newTab(input: string): Promise<void> {
+  private async newTab(input: string, background = false): Promise<void> {
     const url = normalizeNavigationInput(input);
     const tab = createTab(url);
-    this.tabs = this.tabs.map((existing) => existing.runtimeState === 'hot'
-      ? { ...existing, runtimeState: 'warm' }
-      : existing);
-    this.tabs.push(tab);
-    this.activeTabId = tab.id;
+    if (background) tab.runtimeState = 'warm';
+    // A background tab links to the opener but does not steal focus.
     if (this.activeVisitId) this.openedFromVisitByTab.set(tab.id, this.activeVisitId);
+    if (!background) {
+      this.tabs = this.tabs.map((existing) => existing.runtimeState === 'hot'
+        ? { ...existing, runtimeState: 'warm' }
+        : existing);
+    }
+    // Insert directly after the opener (active tab) instead of at the very end,
+    // so a chain of links opens next to where it came from.
+    const openerIndex = this.activeTabId
+      ? this.tabs.findIndex((existing) => existing.id === this.activeTabId)
+      : -1;
+    if (openerIndex >= 0) this.tabs.splice(openerIndex + 1, 0, tab);
+    else this.tabs.push(tab);
+    if (!background) this.activeTabId = tab.id;
     const view = this.createView(tab.id);
     this.views.set(tab.id, { view, lastUsedAt: Date.now() });
-    this.showOnly(tab.id);
+    if (!background) this.showOnly(tab.id);
+    else view.setVisible(false);
     this.emit();
     await view.webContents.loadURL(url);
     this.evictExcessViews();
@@ -177,12 +202,41 @@ export class BrowserManager {
       managed = { view, lastUsedAt: Date.now() };
       this.views.set(tabId, managed);
       this.suppressPathForTab.add(tabId);
-      await view.webContents.loadURL(tab.url);
+      await this.wakeView(tabId, tab.url);
     }
     managed.lastUsedAt = Date.now();
     this.showOnly(tabId);
     this.emit();
     this.evictExcessViews();
+  }
+
+  // Resurrect a frozen tab: restore its back/forward stack and land on the
+  // entry it was on, then reapply scroll once the page finishes loading. Falls
+  // back to a plain load when there is no captured state.
+  private async wakeView(tabId: string, url: string): Promise<void> {
+    const view = this.views.get(tabId)?.view;
+    if (!view) return;
+    const contents = view.webContents;
+    const frozen = this.frozenState.get(tabId);
+    this.frozenState.delete(tabId);
+
+    if (frozen && frozen.entries.length > 0) {
+      if (frozen.scrollY > 0 || frozen.scrollX > 0) {
+        const restoreScroll = () => {
+          contents.executeJavaScript(
+            `window.scrollTo(${frozen.scrollX}, ${frozen.scrollY});`, true,
+          ).catch(() => {});
+        };
+        contents.once('did-finish-load', restoreScroll);
+      }
+      try {
+        await contents.navigationHistory.restore({ entries: frozen.entries, index: frozen.index });
+        return;
+      } catch {
+        // Restore unsupported/failed: fall through to a plain load.
+      }
+    }
+    await contents.loadURL(url);
   }
 
   private async closeTab(tabId: string): Promise<void> {
@@ -195,6 +249,7 @@ export class BrowserManager {
       managed.view.webContents.close();
       this.views.delete(tabId);
     }
+    this.frozenState.delete(tabId);
     this.tabs.splice(index, 1);
 
     if (this.activeTabId === tabId) {
@@ -230,9 +285,14 @@ export class BrowserManager {
     view.setBounds(this.contentBounds);
 
     const contents = view.webContents;
-    contents.setWindowOpenHandler(({ url }) => {
-      void this.newTab(url);
+    contents.setWindowOpenHandler(({ url, disposition }) => {
+      // Cmd/middle-click and background dispositions open without stealing focus.
+      const background = disposition === 'background-tab';
+      void this.newTab(url, background);
       return { action: 'deny' };
+    });
+    contents.on('context-menu', (_event, params) => {
+      this.showContextMenu(tabId, params);
     });
     contents.on('will-navigate', (_event, url) => {
       if (!/^https?:\/\//i.test(url)) _event.preventDefault();
@@ -264,6 +324,61 @@ export class BrowserManager {
       this.emit();
     });
     return view;
+  }
+
+  private showContextMenu(tabId: string, params: Electron.ContextMenuParams): void {
+    const contents = this.views.get(tabId)?.view.webContents;
+    if (!contents) return;
+    const items: MenuItemConstructorOptions[] = [];
+
+    if (params.linkURL) {
+      items.push(
+        { label: 'Open Link in New Tab', click: () => void this.newTab(params.linkURL, true) },
+        { label: 'Open Link in New Tab & Switch', click: () => void this.newTab(params.linkURL) },
+        { label: 'Copy Link Address', click: () => clipboard.writeText(params.linkURL) },
+        { type: 'separator' },
+      );
+    }
+
+    if (params.mediaType === 'image' && params.srcURL) {
+      items.push(
+        { label: 'Open Image in New Tab', click: () => void this.newTab(params.srcURL, true) },
+        { label: 'Copy Image Address', click: () => clipboard.writeText(params.srcURL) },
+        { type: 'separator' },
+      );
+    }
+
+    if (params.selectionText) {
+      items.push(
+        { label: 'Copy', role: 'copy' },
+        {
+          label: `Search Google for “${params.selectionText.slice(0, 24)}${params.selectionText.length > 24 ? '…' : ''}”`,
+          click: () => void this.newTab(normalizeNavigationInput(params.selectionText)),
+        },
+        { type: 'separator' },
+      );
+    }
+
+    if (params.isEditable) {
+      items.push(
+        { label: 'Cut', role: 'cut', enabled: params.editFlags.canCut },
+        { label: 'Copy', role: 'copy', enabled: params.editFlags.canCopy },
+        { label: 'Paste', role: 'paste', enabled: params.editFlags.canPaste },
+        { label: 'Select All', role: 'selectAll' },
+        { type: 'separator' },
+      );
+    }
+
+    items.push(
+      { label: 'Back', enabled: contents.navigationHistory.canGoBack(), click: () => contents.navigationHistory.goBack() },
+      { label: 'Forward', enabled: contents.navigationHistory.canGoForward(), click: () => contents.navigationHistory.goForward() },
+      { label: 'Reload', click: () => contents.reload() },
+      { type: 'separator' },
+      { label: 'Copy Page URL', click: () => clipboard.writeText(contents.getURL()) },
+      { label: 'Inspect Element', click: () => contents.inspectElement(params.x, params.y) },
+    );
+
+    Menu.buildFromTemplate(items).popup({ window: this.window });
   }
 
   private updateLoading(tabId: string, isLoading: boolean): void {
@@ -337,14 +452,49 @@ export class BrowserManager {
       pinned,
     );
 
-    for (const tabId of toFreeze) {
-      const managed = this.views.get(tabId);
-      if (!managed) continue;
-      this.window.contentView.removeChildView(managed.view);
-      managed.view.webContents.close();
-      this.views.delete(tabId);
-      this.tabs = this.tabs.map((tab) => tab.id === tabId ? { ...tab, runtimeState: 'cold' } : tab);
+    for (const tabId of toFreeze) void this.freezeView(tabId);
+    if (toFreeze.length === 0) this.emit();
+  }
+
+  // Capture the renderer's navigation stack + scroll position, then tear down
+  // the renderer. The captured state lets activateTab() resurrect the tab in
+  // place. Capturing scroll is best-effort (cross-origin frames may block it).
+  private async freezeView(tabId: string): Promise<void> {
+    const managed = this.views.get(tabId);
+    if (!managed) return;
+    const contents = managed.view.webContents;
+
+    let scroll = { x: 0, y: 0 };
+    try {
+      scroll = await contents.executeJavaScript(
+        '({ x: window.scrollX || 0, y: window.scrollY || 0 })', true,
+      );
+    } catch {
+      // Ignore: some pages block script eval; we still restore history.
     }
+
+    // The view may have been closed/reactivated while we awaited scroll.
+    if (this.views.get(tabId) !== managed) return;
+
+    try {
+      const history = contents.navigationHistory;
+      const entries = history.getAllEntries();
+      if (entries.length > 0) {
+        this.frozenState.set(tabId, {
+          entries,
+          index: history.getActiveIndex(),
+          scrollX: scroll.x,
+          scrollY: scroll.y,
+        });
+      }
+    } catch {
+      // Ignore: history unavailable; tab will reload fresh on wake.
+    }
+
+    this.window.contentView.removeChildView(managed.view);
+    contents.close();
+    this.views.delete(tabId);
+    this.tabs = this.tabs.map((tab) => tab.id === tabId ? { ...tab, runtimeState: 'cold' } : tab);
     this.emit();
   }
 
