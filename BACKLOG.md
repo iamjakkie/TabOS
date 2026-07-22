@@ -4,6 +4,12 @@ Non-urgent ideas and next steps, newest additions at the bottom of each section.
 Items are pulled from here when we decide to work on them. "Now" work is not
 tracked here — this is the parking lot so nothing gets lost.
 
+## Working rule (default behavior)
+By DEFAULT, every idea/request/suggestion goes to this backlog — do NOT implement
+it immediately. Only implement right away when the user clearly asks to do it NOW
+(e.g. "do this now", "implement X", "go ahead"). When unsure, add to backlog and
+ask. This applies to all future sessions.
+
 ## Open
 
 ### DB persistence optimization (raised 2026-07-21)
@@ -112,6 +118,17 @@ traffic-light position so the first tab clears them, and check
 `trafficLightPosition` + title bar sizing so the buttons are normal size.
 Files: main.ts (BaseWindow trafficLightPosition / titleBarStyle), styles.css
 (.tab-strip left padding, .sidebar-toggle / chrome offsets).
+
+### "Add to path" button placement / UX (raised 2026-07-21)
+Problem: the trailing toolbar row mixes a per-page ACTION (＋ Path = save this page)
+with two PANEL TOGGLES (Study, Brain) as equal peers — wrong mental model, and
+Path/Study are both study-related yet split.
+Recommended fix (Option A): move "add to path" into the address bar as a
+bookmark-style icon (◆＋) on its right edge, like Chrome/Safari's star = "save this
+page". Leaves Study + Brain as the two clean panel toggles. Tooltip + hover label
+for discoverability.
+Alternatives considered: (B) fold into a "Study ▾" split/dropdown button;
+(C) context-menu + shortcut only (least discoverable). Pick A.
 
 ## Done
 (empty)
