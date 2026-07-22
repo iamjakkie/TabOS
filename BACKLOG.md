@@ -85,5 +85,25 @@ SQLite fixes directly. Keep DuckDB in back pocket as a future *secondary, read-o
 analytics store fed from SQLite IF a heavy analytical feature appears (e.g. multi-year,
 10M+ visit rollups) — ETL pattern, never the primary transactional store.
 
+### Brain drawer resizable (raised 2026-07-21)
+The Brain bottom drawer is a fixed 330px. Add a top drag handle to resize its
+height (min ~200, max ~760), sync `brainHeight` into the layout so the web view
+resizes with it, and persist the chosen height (localStorage), same pattern as the
+resizable sidebar.
+
+### Graph zoom sensitivity (raised 2026-07-21)
+Scroll/trackpad zoom in both graphs (Study Mode path canvas + Brain "Your Journey")
+is too aggressive — a slight movement zooms out to invisible instantly. Damp it:
+scale by clamped wheel magnitude with a gentle exponential (e.g. clamp deltaY to
+±40, factor = exp(-delta * ~0.0018)) instead of a fixed per-event multiplier.
+Files: StudyGraphCanvas.tsx, KnowledgeGraphView.tsx onWheel handlers.
+
+### Tab find-bar (raised 2026-07-21)
+Add a tiny magnifier button next to the tabs-manager burger menu. It opens a
+find-across-tabs input that NEVER hides tabs from the bar; instead it jumps you to
+matching tabs Word-style: prev/next arrows cycle through occurrences of the search
+term (match on title/URL), activating each match in turn. Show match count
+(e.g. "3 of 12").
+
 ## Done
 (empty)
