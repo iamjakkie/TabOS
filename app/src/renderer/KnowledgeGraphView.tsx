@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force';
 import type { BrowserPathEvent } from '../shared/browser';
 import { projectVisitsToKnowledgeGraph, type KnowledgeGraphNode } from './knowledge-graph';
+import { DEFAULT_RANGE, filterVisitsByRange, RANGE_PRESETS, type JourneyRange } from './journey-filter';
 
 interface PositionedNode extends KnowledgeGraphNode {
   x?: number;
@@ -23,7 +24,11 @@ export function KnowledgeGraphView({ path, onOpenUrl }: {
   path: BrowserPathEvent[];
   onOpenUrl: (url: string) => void;
 }) {
-  const graph = useMemo(() => projectVisitsToKnowledgeGraph(path), [path]);
+  const [range, setRange] = useState<JourneyRange>(DEFAULT_RANGE);
+  // Full history lives in the DB; the view only renders the selected window so
+  // the graph stays legible even after thousands of visits.
+  const visibleVisits = useMemo(() => filterVisitsByRange(path, range), [path, range]);
+  const graph = useMemo(() => projectVisitsToKnowledgeGraph(visibleVisits), [visibleVisits]);
   const [positions, setPositions] = useState<PositionedNode[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -65,8 +70,11 @@ export function KnowledgeGraphView({ path, onOpenUrl }: {
   return (
     <div className="knowledge-graph">
       <div className="graph-toolbar">
-        <div className="graph-title"><strong>Knowledge graph</strong><span>{graph.nodes.length} pages · {graph.edges.length} connections</span></div>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a node…" />
+        <div className="graph-title"><strong>Your Journey</strong><span>{graph.nodes.length} pages · {graph.edges.length} connections</span></div>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your journey…" />
+        <select className="graph-range" value={range} onChange={(event) => setRange(event.target.value as JourneyRange)}>
+          {RANGE_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+        </select>
         <label><input type="checkbox" checked={showNavigation} onChange={(event) => setShowNavigation(event.target.checked)} /> navigation</label>
         <label><input type="checkbox" checked={showBranches} onChange={(event) => setShowBranches(event.target.checked)} /> opened from</label>
         <button onClick={resetView}>Reset view</button>
@@ -112,7 +120,13 @@ export function KnowledgeGraphView({ path, onOpenUrl }: {
           </g>
         </svg>
         {selected && <aside className="node-inspector"><span>Page</span><strong>{selected.label}</strong><small>{selected.domain}</small><p>{selected.visitCount} visit{selected.visitCount === 1 ? '' : 's'}</p><div><button onClick={() => selected.url && onOpenUrl(selected.url)}>Open page</button><button onClick={() => setSelectedId(null)}>Close</button></div></aside>}
-        {graph.nodes.length === 0 && <div className="graph-empty"><strong>Your graph starts as you browse</strong><span>Pages and connections will accumulate here.</span></div>}
+        {graph.nodes.length === 0 && (
+          <div className="graph-empty">
+            {path.length === 0
+              ? <><strong>Your journey starts as you browse</strong><span>Pages and connections will accumulate here.</span></>
+              : <><strong>Nothing in this window</strong><span>No visits in the selected range — try a wider one.</span></>}
+          </div>
+        )}
       </div>
       <div className="graph-legend"><span><i className="legend-page" /> page</span><span><i className="legend-active" /> current</span><span><i className="legend-nav" /> navigation</span><span><i className="legend-opened" /> opened in new tab</span><em>Scroll to zoom · drag empty space to pan · double-click node to open</em></div>
     </div>

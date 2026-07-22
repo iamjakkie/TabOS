@@ -172,7 +172,7 @@ function App() {
           <div className="brain-header">
             <nav>
               {(['ask', 'path', 'groups', 'activity'] as const).map((mode) => (
-                <button key={mode} className={brainMode === mode ? 'active' : ''} onClick={() => setBrainMode(mode)}>{mode === 'ask' ? 'Ask' : mode[0]!.toUpperCase() + mode.slice(1)}</button>
+                <button key={mode} className={brainMode === mode ? 'active' : ''} onClick={() => setBrainMode(mode)}>{mode === 'ask' ? 'Ask' : mode === 'path' ? 'Journey' : mode[0]!.toUpperCase() + mode.slice(1)}</button>
               ))}
             </nav>
             <div className="brain-context"><span className="status-dot" /> current session · {snapshot.tabs.length} tabs</div>
