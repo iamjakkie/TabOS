@@ -105,5 +105,13 @@ matching tabs Word-style: prev/next arrows cycle through occurrences of the sear
 term (match on title/URL), activating each match in turn. Show match count
 (e.g. "3 of 12").
 
+### macOS traffic lights overlap first tab (raised 2026-07-21)
+The native macOS window buttons (close/minimize/zoom) sit on top of the first tab,
+making that tab unclickable. Also they render weirdly large. Fix the left padding /
+traffic-light position so the first tab clears them, and check
+`trafficLightPosition` + title bar sizing so the buttons are normal size.
+Files: main.ts (BaseWindow trafficLightPosition / titleBarStyle), styles.css
+(.tab-strip left padding, .sidebar-toggle / chrome offsets).
+
 ## Done
 (empty)
