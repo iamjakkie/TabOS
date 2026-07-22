@@ -3,6 +3,10 @@ import path from 'node:path';
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import type { BrowserPathEvent, BrowserSnapshot, BrowserTab, RuntimeState } from '../shared/browser';
 
+// How long navigation history is retained. Older visits are pruned on save so
+// the knowledge graph is a rolling window, not an unbounded log.
+const VISIT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 let sqlPromise: Promise<SqlJsStatic> | undefined;
 
 function loadSql(): Promise<SqlJsStatic> {
@@ -65,7 +69,6 @@ export class SnapshotRepository {
     this.db.run('BEGIN IMMEDIATE');
     try {
       this.db.run('DELETE FROM browser_state');
-      this.db.run('DELETE FROM browser_visits');
       this.db.run('DELETE FROM browser_tabs');
       this.db.run(
         'INSERT INTO browser_state(singleton, active_tab_id, saved_at) VALUES (1, ?, ?)',
@@ -87,8 +90,11 @@ export class SnapshotRepository {
       });
       tabStatement.free();
 
+      // Visits are append-only durable history: never wipe, just add new ones
+      // (INSERT OR IGNORE by id). Old history is trimmed by a time cutoff below,
+      // so the knowledge graph survives restarts and grows over time.
       const visitStatement = this.db.prepare(`
-        INSERT INTO browser_visits(id, position, tab_id, url, title, visited_at, parent_visit_id)
+        INSERT OR IGNORE INTO browser_visits(id, position, tab_id, url, title, visited_at, parent_visit_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       snapshot.path.forEach((visit, position) => {
@@ -98,6 +104,9 @@ export class SnapshotRepository {
         ]);
       });
       visitStatement.free();
+
+      // Prune visits older than the retention window (cutoff-based history).
+      this.db.run('DELETE FROM browser_visits WHERE visited_at < ?', [Date.now() - VISIT_RETENTION_MS]);
       this.db.run('COMMIT');
       this.flush();
     } catch (error) {
