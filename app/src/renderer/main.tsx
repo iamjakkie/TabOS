@@ -8,6 +8,7 @@ import { StudyView } from './StudyView';
 import { QuickAddToStudy } from './QuickAddToStudy';
 import { Sidebar, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from './Sidebar';
 import { faviconSrc } from './favicon';
+import { findMatches, stepIndex } from './tab-find';
 import './styles.css';
 
 const EMPTY: BrowserSnapshot = { tabs: [], activeTabId: null, path: [] };
@@ -28,6 +29,10 @@ function App() {
   const [studyOpen, setStudyOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findIndex, setFindIndex] = useState(0);
+  const findRef = useRef<HTMLInputElement>(null);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(localStorage.getItem('tabos.sidebarWidth'));
     return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : SIDEBAR_DEFAULT_WIDTH;
@@ -44,6 +49,25 @@ function App() {
 
   async function command(value: Parameters<typeof window.tabos.command>[0]) {
     setSnapshot(await window.tabos.command(value));
+  }
+
+  const findResults = useMemo(() => findMatches(snapshot.tabs, findQuery), [snapshot.tabs, findQuery]);
+
+  function jumpToMatch(index: number) {
+    const tabId = findResults[index];
+    if (tabId) void command({ type: 'activate-tab', tabId });
+  }
+
+  function stepFind(direction: 1 | -1) {
+    const next = stepIndex(findIndex, findResults.length, direction);
+    if (next < 0) return;
+    setFindIndex(next);
+    jumpToMatch(next);
+  }
+
+  function openFind() {
+    setFindOpen(true);
+    setTimeout(() => { findRef.current?.focus(); findRef.current?.select(); }, 0);
   }
 
   const hoverWake = useMemo(() => createHoverWakeController((tabId) => {
@@ -65,6 +89,11 @@ function App() {
         event.preventDefault();
         setSidebarOpen((open) => !open);
       }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        setFindOpen(true);
+        setTimeout(() => { findRef.current?.focus(); findRef.current?.select(); }, 0);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => { unsubscribe(); unsubscribeFocus(); unsubscribeUsage(); window.removeEventListener('keydown', onKey); hoverWake.clear(); };
@@ -76,13 +105,21 @@ function App() {
 
   useEffect(() => {
     void window.tabos.setLayout({
-      topInset: 52,
+      topInset: findOpen ? 98 : 52,
       brainHeight: brainOpen ? brainHeight : 0,
       contentHidden: studyOpen || quickAddOpen,
       leftInset: sidebarOpen ? sidebarWidth : 0,
     });
-  }, [brainOpen, brainHeight, studyOpen, quickAddOpen, sidebarOpen, sidebarWidth]);
+  }, [brainOpen, brainHeight, studyOpen, quickAddOpen, sidebarOpen, sidebarWidth, findOpen]);
 
+
+  // Keep the active tab visible in the strip — essential when find/search jumps
+  // to a tab that is scrolled off-screen.
+  useEffect(() => {
+    if (!snapshot.activeTabId || !tabStripRef.current) return;
+    const el = tabStripRef.current.querySelector<HTMLElement>(`[data-tab-id="${snapshot.activeTabId}"]`);
+    el?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+  }, [snapshot.activeTabId]);
 
   function reorderTabs(targetId: string) {
     if (!draggedTab || draggedTab === targetId) return;
@@ -123,6 +160,7 @@ function App() {
         <button className="new-tab-button" onClick={() => command({ type: 'new-tab' })} title="New tab (⌘/Ctrl+T)">＋</button>
         <div className="chrome-actions">
           <button className={sidebarOpen ? 'toggle-active' : ''} onClick={() => setSidebarOpen((open) => !open)} title="Toggle tab list (⌘/Ctrl+B)">☰</button>
+          <button className={findOpen ? 'toggle-active' : ''} onClick={() => (findOpen ? setFindOpen(false) : openFind())} title="Find across tabs (⌘/Ctrl+Shift+F)">⌕</button>
           <button onClick={() => active && command({ type: 'back', tabId: active.id })} disabled={!active?.canGoBack}>←</button>
           <button onClick={() => active && command({ type: 'forward', tabId: active.id })} disabled={!active?.canGoForward}>→</button>
           <button onClick={() => active && command({ type: active.isLoading ? 'stop' : 'reload', tabId: active.id })}>{active?.isLoading ? '×' : '↻'}</button>
@@ -146,6 +184,32 @@ function App() {
         </div>
       </header>
 
+      {findOpen && (
+        <div className="tab-find">
+          <span className="tab-find-icon">⌕</span>
+          <input
+            ref={findRef}
+            value={findQuery}
+            onChange={(event) => {
+              setFindQuery(event.target.value);
+              const results = findMatches(snapshot.tabs, event.target.value);
+              setFindIndex(0);
+              if (results[0]) void command({ type: 'activate-tab', tabId: results[0] });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') { event.preventDefault(); stepFind(event.shiftKey ? -1 : 1); }
+              if (event.key === 'Escape') { event.preventDefault(); setFindOpen(false); }
+            }}
+            placeholder="Find in tabs"
+          />
+          <span className="tab-find-count">
+            {findResults.length ? `${Math.min(findIndex + 1, findResults.length)} of ${findResults.length}` : (findQuery ? 'No matches' : '')}
+          </span>
+          <button onClick={() => stepFind(-1)} disabled={findResults.length === 0} title="Previous (Shift+Enter)">↑</button>
+          <button onClick={() => stepFind(1)} disabled={findResults.length === 0} title="Next (Enter)">↓</button>
+          <button onClick={() => setFindOpen(false)} title="Close (Esc)">×</button>
+        </div>
+      )}
 
       <div className="browser-underlay" />
 
@@ -216,7 +280,7 @@ function TopTab({ tab, active, onActivate, onClose, onHoverStart, onHoverEnd, on
   onHoverStart: () => void; onHoverEnd: () => void; onDragStart: () => void; onDrop: () => void;
 }) {
   return (
-    <div className={`top-tab ${active ? 'active' : ''}`} draggable onDragStart={onDragStart} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} onClick={onActivate} onMouseEnter={onHoverStart} onMouseLeave={onHoverEnd}>
+    <div data-tab-id={tab.id} className={`top-tab ${active ? 'active' : ''}`} draggable onDragStart={onDragStart} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} onClick={onActivate} onMouseEnter={onHoverStart} onMouseLeave={onHoverEnd}>
       <span className={`runtime-dot ${tab.runtimeState}`} />
       {(() => { const icon = faviconSrc(tab.favicon, tab.url); return icon
         ? <img src={icon} onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />

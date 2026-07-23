@@ -26,7 +26,7 @@ button { color: inherit; }
   -webkit-app-region: drag;
 }
 .chrome-actions > button.toggle-active { color: #fff; background: rgba(113,112,255,.22); }
-.tab-strip { grid-column: 1; display: flex; align-items: center; gap: 3px; min-width: 0; height: 52px; padding: 6px 4px 5px 94px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-app-region: drag; }
+.tab-strip { grid-column: 1; display: flex; align-items: center; gap: 3px; min-width: 0; height: 52px; margin-left: 90px; padding: 6px 4px 5px 4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-app-region: drag; }
 .tab-strip::-webkit-scrollbar { display: none; }
 .top-tab {
   -webkit-app-region: no-drag; flex: 0 0 172px; min-width: 172px; max-width: 172px; height: 37px;
@@ -74,6 +74,15 @@ kbd { color: var(--faint); font-size: 10px; border: 1px solid var(--border); bor
 
 .browser-underlay { position: fixed; inset: 52px 0 0; z-index: 0; background: #111; }
 .brain-drawer { position: fixed; z-index: 40; left: 0; right: 0; bottom: 0; height: 330px; background: rgba(14,15,17,.992); border-top: 1px solid rgba(255,255,255,.1); box-shadow: 0 -10px 38px rgba(0,0,0,.3); animation: reveal .18s ease-out; }
+.tab-find { position: fixed; top: 58px; right: 14px; z-index: 55; display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #15161a; border: 1px solid rgba(255,255,255,.16); border-radius: 9px; box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: reveal .12s ease-out; }
+.tab-find-icon { color: var(--muted); font-size: 12px; }
+.tab-find input { width: 200px; height: 26px; padding: 0 8px; font-size: 12px; color: var(--text); background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 6px; outline: none; }
+.tab-find input:focus { border-color: rgba(113,112,255,.55); }
+.tab-find-count { min-width: 62px; font-size: 10.5px; color: var(--muted); text-align: center; }
+.tab-find button { width: 26px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,.04); color: #c8ccd4; cursor: pointer; font-size: 12px; }
+.tab-find button:hover:not(:disabled) { color: #fff; background: rgba(255,255,255,.09); }
+.tab-find button:disabled { opacity: .3; cursor: default; }
+
 .brain-resize { position: absolute; top: -3px; left: 0; right: 0; height: 7px; z-index: 2; cursor: row-resize; }
 .brain-resize:hover, body.resizing-brain .brain-resize { background: rgba(113,112,255,.35); }
 body.resizing-brain { cursor: row-resize; user-select: none; }
