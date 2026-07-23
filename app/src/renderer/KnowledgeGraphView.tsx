@@ -84,7 +84,10 @@ export function KnowledgeGraphView({ path, onOpenUrl }: {
           ref={svgRef}
           onWheel={(event) => {
             event.preventDefault();
-            const factor = event.deltaY > 0 ? .9 : 1.1;
+            // Damp + clamp per-event zoom so a trackpad flick doesn't zoom out
+            // to invisible instantly.
+            const delta = Math.max(-40, Math.min(40, event.deltaY));
+            const factor = Math.exp(-delta * 0.0018);
             setTransform((current) => ({ ...current, scale: Math.max(.35, Math.min(2.6, current.scale * factor)) }));
           }}
           onPointerDown={(event) => {

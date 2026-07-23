@@ -74,6 +74,9 @@ kbd { color: var(--faint); font-size: 10px; border: 1px solid var(--border); bor
 
 .browser-underlay { position: fixed; inset: 52px 0 0; z-index: 0; background: #111; }
 .brain-drawer { position: fixed; z-index: 40; left: 0; right: 0; bottom: 0; height: 330px; background: rgba(14,15,17,.992); border-top: 1px solid rgba(255,255,255,.1); box-shadow: 0 -10px 38px rgba(0,0,0,.3); animation: reveal .18s ease-out; }
+.brain-resize { position: absolute; top: -3px; left: 0; right: 0; height: 7px; z-index: 2; cursor: row-resize; }
+.brain-resize:hover, body.resizing-brain .brain-resize { background: rgba(113,112,255,.35); }
+body.resizing-brain { cursor: row-resize; user-select: none; }
 @keyframes reveal { from { transform: translateY(18px); opacity: .5; } }
 .brain-header { height: 47px; display: grid; grid-template-columns: 1fr auto 32px; align-items: center; padding: 0 13px; border-bottom: 1px solid var(--border); }
 .brain-header nav { display: flex; height: 100%; align-items: end; gap: 4px; }

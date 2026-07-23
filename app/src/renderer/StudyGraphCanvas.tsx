@@ -48,7 +48,10 @@ export function StudyGraphCanvas({ detail, onMoveNode, onAddEdge, onRemoveEdge, 
       className="study-canvas"
       onWheel={(event) => {
         event.preventDefault();
-        const factor = event.deltaY > 0 ? 0.92 : 1.08;
+        // Damp + clamp per-event zoom so a fast trackpad flick can't zoom to
+        // invisible in one gesture.
+        const delta = Math.max(-40, Math.min(40, event.deltaY));
+        const factor = Math.exp(-delta * 0.0018);
         setTransform((t) => ({ ...t, scale: Math.max(0.4, Math.min(2.2, t.scale * factor)) }));
       }}
       onPointerDown={(event) => {

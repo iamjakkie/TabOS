@@ -11,7 +11,9 @@ import { faviconSrc } from './favicon';
 import './styles.css';
 
 const EMPTY: BrowserSnapshot = { tabs: [], activeTabId: null, path: [] };
-const BRAIN_HEIGHT = 330;
+const BRAIN_DEFAULT_HEIGHT = 330;
+const BRAIN_MIN_HEIGHT = 200;
+const BRAIN_MAX_HEIGHT = 760;
 const SIDEBAR_DEFAULT_WIDTH = 260;
 
 function App() {
@@ -19,6 +21,10 @@ function App() {
   const [address, setAddress] = useState('');
   const [brainOpen, setBrainOpen] = useState(false);
   const [brainMode, setBrainMode] = useState<'ask' | 'path' | 'groups' | 'activity'>('ask');
+  const [brainHeight, setBrainHeight] = useState(() => {
+    const stored = Number(localStorage.getItem('tabos.brainHeight'));
+    return stored >= BRAIN_MIN_HEIGHT && stored <= BRAIN_MAX_HEIGHT ? stored : BRAIN_DEFAULT_HEIGHT;
+  });
   const [studyOpen, setStudyOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -71,11 +77,11 @@ function App() {
   useEffect(() => {
     void window.tabos.setLayout({
       topInset: 52,
-      brainHeight: brainOpen ? BRAIN_HEIGHT : 0,
+      brainHeight: brainOpen ? brainHeight : 0,
       contentHidden: studyOpen || quickAddOpen,
       leftInset: sidebarOpen ? sidebarWidth : 0,
     });
-  }, [brainOpen, studyOpen, quickAddOpen, sidebarOpen, sidebarWidth]);
+  }, [brainOpen, brainHeight, studyOpen, quickAddOpen, sidebarOpen, sidebarWidth]);
 
 
   function reorderTabs(targetId: string) {
@@ -168,7 +174,27 @@ function App() {
       )}
 
       {brainOpen && (
-        <section className="brain-drawer">
+        <section className="brain-drawer" style={{ height: brainHeight }}>
+          <div
+            className="brain-resize"
+            title="Drag to resize"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              const move = (e: PointerEvent) => {
+                const next = Math.max(BRAIN_MIN_HEIGHT, Math.min(BRAIN_MAX_HEIGHT, window.innerHeight - e.clientY));
+                setBrainHeight(next);
+                localStorage.setItem('tabos.brainHeight', String(next));
+              };
+              const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                document.body.classList.remove('resizing-brain');
+              };
+              document.body.classList.add('resizing-brain');
+              window.addEventListener('pointermove', move);
+              window.addEventListener('pointerup', up);
+            }}
+          />
           <div className="brain-header">
             <nav>
               {(['ask', 'path', 'groups', 'activity'] as const).map((mode) => (
