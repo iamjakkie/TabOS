@@ -46,7 +46,7 @@ async function createWindow(): Promise<void> {
     title: 'TabOS',
     backgroundColor: '#070b14',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 13, y: 17 },
+    trafficLightPosition: { x: 16, y: 18 },
   });
 
   shellView = new WebContentsView({

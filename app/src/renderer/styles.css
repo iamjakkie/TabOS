@@ -26,7 +26,7 @@ button { color: inherit; }
   -webkit-app-region: drag;
 }
 .chrome-actions > button.toggle-active { color: #fff; background: rgba(113,112,255,.22); }
-.tab-strip { grid-column: 1; display: flex; align-items: center; gap: 3px; min-width: 0; height: 52px; padding: 6px 4px 5px 78px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-app-region: drag; }
+.tab-strip { grid-column: 1; display: flex; align-items: center; gap: 3px; min-width: 0; height: 52px; padding: 6px 4px 5px 94px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-app-region: drag; }
 .tab-strip::-webkit-scrollbar { display: none; }
 .top-tab {
   -webkit-app-region: no-drag; flex: 0 0 172px; min-width: 172px; max-width: 172px; height: 37px;
